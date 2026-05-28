@@ -47,3 +47,5 @@ __pycache__/
 
 # databases
 *.db
+qdrant_data/
+backend/qdrant_data/

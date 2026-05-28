@@ -50,6 +50,7 @@ interface ChatContextType {
   memories: Memory[];
   addMemory: (fact: string, category: Memory["category"]) => Promise<void>;
   deleteMemory: (id: string) => Promise<void>;
+  editMemory: (id: string, fact: string, category: Memory["category"]) => Promise<void>;
   
   // Dynamic Authentication integrations
   token: string | null;
@@ -621,6 +622,32 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setMemories((prev) => prev.filter((m) => m.id !== id));
   };
 
+  const editMemory = async (id: string, fact: string, category: Memory["category"]) => {
+    if (token && !backendOffline && !id.startsWith("mem-")) {
+      try {
+        const res = await fetch(`${API_BASE}/memory/${id}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ fact, category })
+        });
+        if (res.ok) {
+          await syncMemories();
+          return;
+        }
+      } catch (e) {
+        setBackendOffline(true);
+      }
+    }
+    
+    // Client mock edit fallback
+    setMemories((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, fact, category } : m))
+    );
+  };
+
   return (
     <ChatContext.Provider
       value={{
@@ -638,6 +665,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         memories,
         addMemory,
         deleteMemory,
+        editMemory,
         token,
         user,
         loginUser,

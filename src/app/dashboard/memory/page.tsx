@@ -10,7 +10,7 @@ import { AnimatePresence } from "framer-motion";
 import { FiPlus, FiSearch, FiCpu, FiPlusCircle, FiX } from "react-icons/fi";
 
 export default function MemoryDashboard() {
-  const { memories, addMemory, deleteMemory } = useChat();
+  const { memories, addMemory, deleteMemory, editMemory } = useChat();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<string>("All");
   
@@ -167,7 +167,7 @@ export default function MemoryDashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               <AnimatePresence mode="popLayout">
                 {filteredMemories.map((mem) => (
-                  <MemoryCard key={mem.id} memory={mem} onDelete={deleteMemory} />
+                  <MemoryCard key={mem.id} memory={mem} onDelete={deleteMemory} onEdit={editMemory} />
                 ))}
               </AnimatePresence>
             </div>

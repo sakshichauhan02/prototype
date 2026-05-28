@@ -85,6 +85,17 @@ async def send_message(
     )
     db.add(user_msg)
     
+    # Selective Memory Detection and Extraction
+    try:
+        from app.services.memory_service import memory_service
+        await memory_service.process_incoming_message(
+            user_id=current_user.id,
+            message=msg_in.content,
+            db=db
+        )
+    except Exception as e:
+        print(f"Memory extraction process error: {e}")
+    
     # RAG: Retrieve facts context related to query
     rag_context = await rag_service.retrieve_context(
         user_id=current_user.id,

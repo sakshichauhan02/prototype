@@ -8,6 +8,8 @@ from app.models.user import User
 from app.models.memory import Memory
 from app.schemas.memory import MemoryCreate, MemoryResponse
 
+from app.services.memory_service import memory_service
+
 router = APIRouter()
 
 @router.get("", response_model=List[MemoryResponse])
@@ -30,15 +32,30 @@ async def add_memory(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    new_memory = Memory(
+    return await memory_service.add_memory_manually(
+        user_id=current_user.id,
         fact=memory_in.fact,
         category=memory_in.category,
-        user_id=current_user.id
+        db=db
     )
-    db.add(new_memory)
-    await db.commit()
-    await db.refresh(new_memory)
-    return new_memory
+
+@router.put("/{memory_id}", response_model=MemoryResponse)
+async def update_memory(
+    memory_id: int,
+    memory_in: MemoryCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    updated = await memory_service.update_memory(
+        user_id=current_user.id,
+        memory_id=memory_id,
+        fact=memory_in.fact,
+        category=memory_in.category,
+        db=db
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Memory fact not found")
+    return updated
 
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_memory(
@@ -46,14 +63,10 @@ async def delete_memory(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    stmt = select(Memory).where(
-        Memory.id == memory_id,
-        Memory.user_id == current_user.id
+    success = await memory_service.delete_memory(
+        user_id=current_user.id,
+        memory_id=memory_id,
+        db=db
     )
-    result = await db.execute(stmt)
-    memory = result.scalar_one_or_none()
-    if not memory:
+    if not success:
         raise HTTPException(status_code=404, detail="Memory fact not found")
-        
-    await db.delete(memory)
-    await db.commit()

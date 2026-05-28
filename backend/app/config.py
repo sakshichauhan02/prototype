@@ -19,6 +19,9 @@ class Settings(BaseSettings):
         default="",
         validation_alias="GEMINI_API_KEY"
     )
+    QDRANT_PATH: str = "./qdrant_data"
+    QDRANT_URL: str = ""
+    QDRANT_API_KEY: str = ""
 
     class Config:
         case_sensitive = True
