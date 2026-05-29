@@ -47,6 +47,62 @@ class WebResearchService:
         return []
 
     @staticmethod
+    async def perform_google_search(query: str, api_key: str, cse_id: str) -> List[Dict[str, Any]]:
+        """
+        Runs a search on Google Custom Search API.
+        """
+        url = "https://www.googleapis.com/customsearch/v1"
+        params = {
+            "key": api_key,
+            "cx": cse_id,
+            "q": query
+        }
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.get(url, params=params)
+                if response.status_code == 200:
+                    data = response.json()
+                    results = []
+                    for item in data.get("items", [])[:3]:
+                        results.append({
+                            "title": item.get("title"),
+                            "snippet": item.get("snippet"),
+                            "link": item.get("link")
+                        })
+                    return results
+        except Exception as e:
+            print(f"Google Custom Search API call failed: {e}")
+        return []
+
+    @staticmethod
+    async def perform_news_search(query: str, api_key: str) -> List[Dict[str, Any]]:
+        """
+        Runs a search on News API.
+        """
+        url = "https://newsapi.org/v2/everything"
+        params = {
+            "q": query,
+            "apiKey": api_key,
+            "pageSize": 3
+        }
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.get(url, params=params)
+                if response.status_code == 200:
+                    data = response.json()
+                    results = []
+                    for item in data.get("articles", [])[:3]:
+                        results.append({
+                            "title": item.get("title"),
+                            "snippet": item.get("description"),
+                            "link": item.get("url")
+                        })
+                    return results
+        except Exception as e:
+            print(f"News API call failed: {e}")
+        return []
+
+    @staticmethod
     async def perform_ddg_fallback_search(query: str) -> List[Dict[str, Any]]:
         """
         Scrapes DuckDuckGo HTML for search results without requiring keys.
@@ -66,14 +122,11 @@ class WebResearchService:
                     parts = html.split('<div class="result__snippet">')
                     for i, part in enumerate(parts[1:4]):
                         snippet = part.split('</div>')[0].strip()
-                        # Clean html entity relics
                         snippet = snippet.replace('<b>', '').replace('</b>', '').replace('&amp;', '&').replace('&#x27;', "'")
                         
-                        # Get URL and title
                         title = f"Web Search Result {i+1}"
                         link = "#"
                         try:
-                            # Try to backtrack to link info
                             link_part = parts[i].split('<a class="result__url" href="')
                             if len(link_part) > 1:
                                 link = link_part[1].split('"')[0].strip()
@@ -96,14 +149,30 @@ class WebResearchService:
     @staticmethod
     async def search_and_summarize(query: str) -> str:
         """
-        Performs web search (SerpAPI or DDG Scraper) and returns formatted search context for LLM prompt.
+        Performs web search (News API, SerpAPI, Google Search, or DDG Scraper) and returns formatted search context.
         """
-        # Read API key if dynamically supplied in environment or settings
-        serp_key = getattr(settings, "SERPAPI_API_KEY", None)
+        results = []
         
-        if serp_key:
-            results = await WebResearchService.perform_serp_search(query, serp_key)
-        else:
+        # 1. Routing to News API if news query is detected
+        news_key = getattr(settings, "NEWS_API_KEY", None)
+        if news_key and any(term in query.lower() for term in ["news", "latest", "headline"]):
+            results = await WebResearchService.perform_news_search(query, news_key)
+            
+        # 2. Routing to SerpAPI
+        if not results:
+            serp_key = getattr(settings, "SERPAPI_API_KEY", None)
+            if serp_key:
+                results = await WebResearchService.perform_serp_search(query, serp_key)
+                
+        # 3. Routing to Google Custom Search API
+        if not results:
+            google_key = getattr(settings, "GOOGLE_API_KEY", None)
+            cse_id = getattr(settings, "GOOGLE_CSE_ID", None)
+            if google_key and cse_id:
+                results = await WebResearchService.perform_google_search(query, google_key, cse_id)
+                
+        # 4. Fallback DuckDuckGo Scraping
+        if not results:
             results = await WebResearchService.perform_ddg_fallback_search(query)
             
         if not results:

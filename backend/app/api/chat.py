@@ -181,6 +181,7 @@ async def send_message(
         # Create a mock temporary message model to return to client (not committed to DB)
         import datetime
         ai_msg = ChatMessage(
+            id=-1,
             thread_id=thread_id,
             sender="ai",
             content=f"🔒 [Private Mode Active - Not Persisted]\n{ai_reply_content}",

@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     QDRANT_URL: str = ""
     QDRANT_API_KEY: str = ""
     HUGGINGFACE_API_KEY: str = ""
+    SERPAPI_API_KEY: str = ""
+    GOOGLE_API_KEY: str = ""
+    GOOGLE_CSE_ID: str = ""
+    NEWS_API_KEY: str = ""
 
     class Config:
         case_sensitive = True
