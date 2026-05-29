@@ -24,7 +24,10 @@ async def get_memories(
         
     stmt = stmt.order_by(Memory.timestamp.desc())
     result = await db.execute(stmt)
-    return result.scalars().all()
+    memories = result.scalars().all()
+    for m in memories:
+        m.fact = memory_service.decrypt_fact(m.fact)
+    return memories
 
 @router.post("", response_model=MemoryResponse, status_code=status.HTTP_201_CREATED)
 async def add_memory(
