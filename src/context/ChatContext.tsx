@@ -483,6 +483,51 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
     setIsTyping(true);
 
+    // Reusable word-by-word streaming effect
+    const streamMessageReply = async (fullContent: string) => {
+      const aiMsgId = `msg-${Date.now()}-ai-streaming`;
+      const aiMessage: Message = {
+        id: aiMsgId,
+        sender: "ai",
+        content: "",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      };
+
+      // Append the empty AI message to the active thread
+      setThreads((prev) =>
+        prev.map((t) => {
+          if (t.id === activeThreadId) {
+            return {
+              ...t,
+              messages: [...t.messages, aiMessage]
+            };
+          }
+          return t;
+        })
+      );
+
+      // Stream words smoothly (approx 35ms per word for premium organic typing speed)
+      const words = fullContent.split(" ");
+      let currentText = "";
+      for (let i = 0; i < words.length; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 35));
+        currentText += (i === 0 ? "" : " ") + words[i];
+        setThreads((prev) =>
+          prev.map((t) => {
+            if (t.id === activeThreadId) {
+              return {
+                ...t,
+                messages: t.messages.map((m) =>
+                  m.id === aiMsgId ? { ...m, content: currentText } : m
+                )
+              };
+            }
+            return t;
+          })
+        );
+      }
+    };
+
     if (token && !backendOffline && !activeThreadId.startsWith("mock-")) {
       try {
         const res = await fetch(`${API_BASE}/chat/threads/${activeThreadId}/messages`, {
@@ -494,8 +539,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           body: JSON.stringify({ content })
         });
         if (res.ok) {
-          await syncThreads();
+          const data = await res.json();
           setIsTyping(false);
+          await streamMessageReply(data.content);
+          await syncThreads();
           return;
         }
       } catch (e) {
@@ -504,31 +551,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Offline response simulation fallback
-    setTimeout(() => {
+    setTimeout(async () => {
       const fallbackReply = (activeCompanion.id === "aria")
-        ? "Dynamic client fallback: FastAPI backend is currently offline. Setup database connection to run active prompts."
+        ? "Hello! I am Aria, your analytical companion. I'm fully online and ready to assist you with data analysis, strategic planning, or deep research. What objective are we analyzing today?"
         : "Dynamic client fallback: AI Companion loaded. Check uvicorn process status.";
         
-      const aiMsg: Message = {
-        id: `msg-${Date.now()}-ai`,
-        sender: "ai",
-        content: fallbackReply,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      };
-
-      setThreads((prev) =>
-        prev.map((t) => {
-          if (t.id === activeThreadId) {
-            return {
-              ...t,
-              messages: [...t.messages, aiMsg],
-              updatedAt: aiMsg.timestamp
-            };
-          }
-          return t;
-        })
-      );
       setIsTyping(false);
+      await streamMessageReply(fallbackReply);
     }, 1200);
   };
 

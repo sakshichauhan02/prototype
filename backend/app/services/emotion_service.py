@@ -11,148 +11,51 @@ class EmotionService:
     async def analyze_emotion(message: str) -> Dict[str, Any]:
         """
         Analyzes the emotional tone, sentiment label, score, and intensity of a user message.
+        Uses a fast, local rule-based sentiment/emotion classifier to completely save precious API quota.
         """
-        # Try HuggingFace Inference API first if HUGGINGFACE_API_KEY is configured
-        hf_token = getattr(settings, "HUGGINGFACE_API_KEY", None) or os.getenv("HUGGINGFACE_API_KEY")
-        if hf_token and hf_token.strip():
-            api_url = "https://api-inference.huggingface.co/models/bhadresh-savani/distilbert-base-uncased-emotion"
-            headers = {"Authorization": f"Bearer {hf_token}"}
-            try:
-                async with httpx.AsyncClient(timeout=8.0) as client:
-                    resp = await client.post(api_url, json={"inputs": message}, headers=headers)
-                    if resp.status_code == 200:
-                        predictions = resp.json()
-                        # Output format: [[{"label": "joy", "score": 0.95}, ...]]
-                        if predictions and isinstance(predictions, list) and len(predictions) > 0:
-                            scores_list = predictions[0] if isinstance(predictions[0], list) else predictions
-                            best = max(scores_list, key=lambda x: x["score"])
-                            hf_emotion = best["label"].lower() # joy, sadness, anger, fear, love, surprise
-                            
-                            mapping = {
-                                "joy": ("excited", "POSITIVE"),
-                                "love": ("excited", "POSITIVE"),
-                                "sadness": ("sad", "NEGATIVE"),
-                                "anger": ("frustrated", "NEGATIVE"),
-                                "fear": ("stressed", "NEGATIVE"),
-                                "surprise": ("excited", "POSITIVE")
-                            }
-                            mapped_emotion, sentiment = mapping.get(hf_emotion, ("neutral", "NEUTRAL"))
-                            return {
-                                "primary_emotion": mapped_emotion,
-                                "sentiment_label": sentiment,
-                                "sentiment_score": float(best["score"]),
-                                "intensity": float(best["score"]),
-                                "notes": f"Classified via HuggingFace model bhadresh-savani/distilbert-base-uncased-emotion: {hf_emotion}."
-                            }
-            except Exception as e:
-                print(f"HuggingFace Inference API error: {e}")
-
-        if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
-            # Rule-based fallback classifier
-            msg_lower = message.lower()
-            if any(w in msg_lower for w in ["stressed", "anxious", "deadline", "busy", "overwhelmed", "tired", "exhausted"]):
-                return {
-                    "primary_emotion": "stressed",
-                    "sentiment_label": "NEGATIVE",
-                    "sentiment_score": 0.8,
-                    "intensity": 0.85,
-                    "notes": "Detected words relating to stress or exhaustion."
-                }
-            elif any(w in msg_lower for w in ["excited", "happy", "great", "awesome", "wonderful", "cool", "yay", "love"]):
-                return {
-                    "primary_emotion": "excited",
-                    "sentiment_label": "POSITIVE",
-                    "sentiment_score": 0.95,
-                    "intensity": 0.9,
-                    "notes": "Detected positive excitement indicators."
-                }
-            elif any(w in msg_lower for w in ["frustrated", "angry", "annoyed", "hate", "slow", "broke", "stupid", "worst"]):
-                return {
-                    "primary_emotion": "frustrated",
-                    "sentiment_label": "NEGATIVE",
-                    "sentiment_score": 0.9,
-                    "intensity": 0.95,
-                    "notes": "Detected irritation or anger key terms."
-                }
-            elif any(w in msg_lower for w in ["sad", "depressed", "lonely", "unhappy", "cry", "hurt"]):
-                return {
-                    "primary_emotion": "sad",
-                    "sentiment_label": "NEGATIVE",
-                    "sentiment_score": 0.75,
-                    "intensity": 0.7,
-                    "notes": "Detected sadness vocabulary."
-                }
-            else:
-                return {
-                    "primary_emotion": "neutral",
-                    "sentiment_label": "NEUTRAL",
-                    "sentiment_score": 0.5,
-                    "intensity": 0.2,
-                    "notes": "No strong emotional markers detected."
-                }
-
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
-        headers = {"Content-Type": "application/json"}
-        
-        system_instruction = (
-            "You are a sentiment and emotion analysis engine. Analyze the user text and output ONLY a JSON object in this format:\n"
-            "{\n"
-            "  \"primary_emotion\": \"stressed\" | \"excited\" | \"frustrated\" | \"sad\" | \"neutral\",\n"
-            "  \"sentiment_label\": \"POSITIVE\" | \"NEGATIVE\" | \"NEUTRAL\",\n"
-            "  \"sentiment_score\": 0.0 to 1.0,\n"
-            "  \"intensity\": 0.0 to 1.0,\n"
-            "  \"notes\": \"brief reasoning detailing why\"\n"
-            "}"
-        )
-        
-        payload = {
-            "contents": [{
-                "role": "user",
-                "parts": [{"text": message}]
-            }],
-            "systemInstruction": {
-                "parts": [{"text": system_instruction}]
-            },
-            "generationConfig": {
-                "temperature": 0.1,
-                "responseMimeType": "application/json"
+        msg_lower = message.lower()
+        if any(w in msg_lower for w in ["stressed", "anxious", "deadline", "busy", "overwhelmed", "tired", "exhausted"]):
+            return {
+                "primary_emotion": "stressed",
+                "sentiment_label": "NEGATIVE",
+                "sentiment_score": 0.8,
+                "intensity": 0.85,
+                "notes": "Detected words relating to stress or exhaustion."
             }
-        }
-        
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(url, json=payload, headers=headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    candidates = data.get("candidates", [])
-                    if candidates and "content" in candidates[0]:
-                        parts = candidates[0]["content"].get("parts", [])
-                        text = parts[0].get("text", "").strip() if parts else ""
-                        
-                        if text:
-                            # Clean markdown codeblocks
-                            if text.startswith("```json"):
-                                text = text.split("```json")[1].split("```")[0].strip()
-                            elif text.startswith("```"):
-                                text = text.split("```")[1].split("```")[0].strip()
-                            parsed = json.loads(text)
-                            return {
-                                "primary_emotion": parsed.get("primary_emotion", "neutral"),
-                                "sentiment_label": parsed.get("sentiment_label", "NEUTRAL"),
-                                "sentiment_score": float(parsed.get("sentiment_score", 0.5)),
-                                "intensity": float(parsed.get("intensity", 0.0)),
-                                "notes": parsed.get("notes", "")
-                            }
-        except Exception as e:
-            print(f"Gemini emotion analysis error: {e}")
-            
-        return {
-            "primary_emotion": "neutral",
-            "sentiment_label": "NEUTRAL",
-            "sentiment_score": 0.5,
-            "intensity": 0.0,
-            "notes": "Fallback default due to analysis failure."
-        }
+        elif any(w in msg_lower for w in ["excited", "happy", "great", "awesome", "wonderful", "cool", "yay", "love"]):
+            return {
+                "primary_emotion": "excited",
+                "sentiment_label": "POSITIVE",
+                "sentiment_score": 0.95,
+                "intensity": 0.9,
+                "notes": "Detected positive excitement indicators."
+            }
+        elif any(w in msg_lower for w in ["frustrated", "angry", "annoyed", "hate", "slow", "broke", "stupid", "worst"]):
+            return {
+                "primary_emotion": "frustrated",
+                "sentiment_label": "NEGATIVE",
+                "sentiment_score": 0.9,
+                "intensity": 0.95,
+                "notes": "Detected irritation or anger key terms."
+            }
+        elif any(w in msg_lower for w in ["sad", "depressed", "lonely", "unhappy", "cry", "hurt"]):
+            return {
+                "primary_emotion": "sad",
+                "sentiment_label": "NEGATIVE",
+                "sentiment_score": 0.75,
+                "intensity": 0.7,
+                "notes": "Detected sadness vocabulary."
+            }
+        else:
+            return {
+                "primary_emotion": "neutral",
+                "sentiment_label": "NEUTRAL",
+                "sentiment_score": 0.5,
+                "intensity": 0.2,
+                "notes": "No strong emotional markers detected."
+            }
+
+
 
     @staticmethod
     async def record_emotion(

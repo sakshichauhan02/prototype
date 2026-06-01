@@ -40,16 +40,13 @@ async def create_thread(
     )
     db.add(new_thread)
     await db.commit()
-    await db.refresh(new_thread)
-    return {
-        "id": new_thread.id,
-        "title": new_thread.title,
-        "companion_id": new_thread.companion_id,
-        "user_id": new_thread.user_id,
-        "created_at": new_thread.created_at,
-        "updated_at": new_thread.updated_at,
-        "messages": [],
-    }
+    
+    # Pre-fetch the created thread with messages loaded to avoid MissingGreenlet lazy-loading error
+    stmt = select(ChatThread).where(ChatThread.id == new_thread.id).options(selectinload(ChatThread.messages))
+    result = await db.execute(stmt)
+    db_thread = result.scalar_one()
+    return db_thread
+
 
 @router.post("/threads/{thread_id}/messages", response_model=MessageResponse)
 async def send_message(
@@ -160,10 +157,12 @@ async def send_message(
         # Trigger companion reply generation with modified instruction
         ai_reply_content = await ai_service.generate_reply(
             companion_id=thread.companion_id,
-            message=msg_in.content + rag_context + emotion_modifier,
+            message=msg_in.content,
             history=history,
             temperature=current_user.temperature,
-            tone=current_user.tone
+            tone=current_user.tone,
+            rag_context=rag_context,
+            emotion_modifier=emotion_modifier
         )
 
     # Log AI message (if NOT in private mode)
@@ -208,15 +207,9 @@ async def rename_thread(
         
     thread.title = thread_in.title
     await db.commit()
-    return {
-        "id": thread.id,
-        "title": thread.title,
-        "companion_id": thread.companion_id,
-        "user_id": thread.user_id,
-        "created_at": thread.created_at,
-        "updated_at": thread.updated_at,
-        "messages": thread.messages,
-    }
+    await db.refresh(thread)
+    return thread
+
 
 @router.delete("/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_thread(

@@ -45,6 +45,21 @@ export default function TasksDashboard() {
   const [priority, setPriority] = useState<number>(3);
   const [dueDate, setDueDate] = useState("");
 
+  // Reusable Premium Toast Notification State
+  const [toast, setToast] = useState<{ show: boolean; message: string; type: "success" | "error" }>({
+    show: false,
+    message: "",
+    type: "success"
+  });
+
+  const triggerToast = (message: string, type: "success" | "error" = "success") => {
+    setToast({ show: true, message, type });
+    // Reset toast state after 3.5s
+    setTimeout(() => {
+      setToast((prev) => ({ ...prev, show: false }));
+    }, 3500);
+  };
+
   const API_BASE = "http://localhost:8000/api/v1";
 
   // Fetch tasks
@@ -112,6 +127,7 @@ export default function TasksDashboard() {
       };
       setTasks((prev) => [mockNew, ...prev]);
       resetForm();
+      triggerToast(`Task "${payload.title}" created successfully (Local Sandbox)!`);
       return;
     }
 
@@ -129,11 +145,12 @@ export default function TasksDashboard() {
         const newTask = await res.json();
         setTasks((prev) => [newTask, ...prev]);
         resetForm();
+        triggerToast(`Task "${payload.title}" saved to core engine!`);
       } else {
-        alert("Could not save task on server.");
+        triggerToast("Could not save task on server.", "error");
       }
     } catch (err) {
-      alert("Error contacting tasks backend.");
+      triggerToast("Error contacting tasks backend.", "error");
     }
   };
 
@@ -153,6 +170,7 @@ export default function TasksDashboard() {
             : t
         )
       );
+      triggerToast(newStatus === "completed" ? "Task marked as completed!" : "Task set back to pending.");
       return;
     }
 
@@ -169,16 +187,22 @@ export default function TasksDashboard() {
       if (res.ok) {
         const updated = await res.json();
         setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+        triggerToast(newStatus === "completed" ? "Task marked as completed!" : "Task set back to pending.");
       }
     } catch (err) {
       console.error("Error toggling task status:", err);
+      triggerToast("Failed to update status on server.", "error");
     }
   };
 
   // Delete task
   const handleDeleteTask = async (taskId: number) => {
+    const taskToDelete = tasks.find((t) => t.id === taskId);
+    const taskTitle = taskToDelete ? taskToDelete.title : "Task";
+
     if (!token || backendOffline) {
       setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      triggerToast(`Removed task: "${taskTitle}"`);
       return;
     }
 
@@ -190,9 +214,11 @@ export default function TasksDashboard() {
 
       if (res.ok) {
         setTasks((prev) => prev.filter((t) => t.id !== taskId));
+        triggerToast(`Deleted task: "${taskTitle}"`);
       }
     } catch (err) {
       console.error("Error deleting task:", err);
+      triggerToast("Failed to delete task from server.", "error");
     }
   };
 
@@ -203,6 +229,7 @@ export default function TasksDashboard() {
     setDueDate("");
     setShowAddForm(false);
   };
+
 
   const getMockTasks = (): TaskItem[] => {
     return [
@@ -499,6 +526,35 @@ export default function TasksDashboard() {
           </div>
         </main>
       </div>
+
+      {/* Floating Glassmorphic Toast Notification */}
+      {toast.show && (
+        <div className="fixed top-6 right-6 z-50 transform transition-all duration-300 animate-in fade-in slide-in-from-top-4">
+          <div className="px-5 py-4 rounded-2xl bg-white/75 dark:bg-zinc-950/80 backdrop-blur-xl border border-zinc-200/50 dark:border-zinc-800/80 shadow-[0_10px_30px_rgba(0,0,0,0.08)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.45)] flex items-center gap-3.5 max-w-sm">
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-white shadow-sm ${
+              toast.type === "success" 
+                ? "bg-gradient-to-r from-emerald-500 to-teal-500 shadow-emerald-500/20" 
+                : "bg-gradient-to-r from-red-500 to-rose-500 shadow-red-500/20"
+            }`}>
+              {toast.type === "success" ? <FiCheckSquare className="w-4.5 h-4.5" /> : <FiAlertCircle className="w-4.5 h-4.5" />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-[13px] font-bold text-zinc-900 dark:text-zinc-150 leading-tight">
+                {toast.type === "success" ? "Notification Alert" : "System Error"}
+              </h4>
+              <p className="text-[11.5px] text-zinc-500 dark:text-zinc-400 font-semibold mt-0.5 truncate leading-normal">
+                {toast.message}
+              </p>
+            </div>
+            <button 
+              onClick={() => setToast(prev => ({ ...prev, show: false }))}
+              className="p-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-400 dark:text-zinc-650 transition cursor-pointer"
+            >
+              <FiX className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

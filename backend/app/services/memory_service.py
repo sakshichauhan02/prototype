@@ -31,18 +31,22 @@ class MemoryService:
     async def extract_important_fact(message: str) -> Optional[Dict[str, str]]:
         """
         Uses Gemini LLM to detect if there is any long-term fact to remember.
-        Returns a dict with {"fact": "...", "category": "..."} or None if ignored.
+        Uses a fast first-pass keyword filter to completely skip remote LLM calls for regular chat and greetings.
         """
+        msg_lower = message.lower()
+        
+        # Smart pre-filter: Only extract if it contains active intent to share long-term facts
+        fact_indicators = ["remember that", "i love", "i like", "my favorite", "i work as", "i live in", "my goal is"]
+        if not any(indicator in msg_lower for indicator in fact_indicators):
+            return None
+
         if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
             # Trivial local fallback for demo mode
-            msg_lower = message.lower()
-            if "i love" in msg_lower or "i like" in msg_lower or "my favorite" in msg_lower or "i work" in msg_lower:
-                fact = message.strip()
-                category = "Preferences"
-                if "learn" in msg_lower or "code" in msg_lower or "build" in msg_lower:
-                    category = "Technical"
-                return {"fact": fact, "category": category}
-            return None
+            fact = message.strip()
+            category = "Preferences"
+            if "learn" in msg_lower or "code" in msg_lower or "build" in msg_lower:
+                category = "Technical"
+            return {"fact": fact, "category": category}
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
         headers = {"Content-Type": "application/json"}

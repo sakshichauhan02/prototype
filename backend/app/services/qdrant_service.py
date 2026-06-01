@@ -45,30 +45,10 @@ class QdrantService:
                 )
 
     async def generate_embedding(self, text: str) -> List[float]:
-        if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
-            return self._generate_hash_fallback_embedding(text)
-
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={settings.GEMINI_API_KEY}"
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "model": "models/text-embedding-004",
-            "content": {
-                "parts": [{"text": text}]
-            }
-        }
-        
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as http_client:
-                response = await http_client.post(url, json=payload, headers=headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    embedding = data.get("embedding", {}).get("values", [])
-                    if embedding:
-                        return embedding
-                print(f"Warning: Gemini Embedding API returned status {response.status_code}. Using hash fallback.")
-        except Exception as e:
-            print(f"Warning: Exception calling Gemini Embedding API: {e}. Using hash fallback.")
-            
+        """
+        Generates 768-dimensional embeddings. Uses a fast local deterministic hash-based embedding
+        fallback to completely save precious Google Gemini API key quota limits.
+        """
         return self._generate_hash_fallback_embedding(text)
 
     def _generate_hash_fallback_embedding(self, text: str) -> List[float]:
