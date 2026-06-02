@@ -107,6 +107,8 @@ class WebResearchService:
         """
         Scrapes DuckDuckGo HTML for search results without requiring keys.
         """
+        import re
+        import html
         encoded = urllib.parse.quote_plus(query)
         url = f"https://html.duckduckgo.com/html/?q={encoded}"
         headers = {
@@ -116,25 +118,32 @@ class WebResearchService:
             async with httpx.AsyncClient(timeout=8.0) as client:
                 response = await client.get(url, headers=headers)
                 if response.status_code == 200:
-                    html = response.text
+                    html_text = response.text
+                    parts = html_text.split('result__body')
                     results = []
-                    # Basic snippet parsing
-                    parts = html.split('<div class="result__snippet">')
-                    for i, part in enumerate(parts[1:4]):
-                        snippet = part.split('</div>')[0].strip()
-                        snippet = snippet.replace('<b>', '').replace('</b>', '').replace('&amp;', '&').replace('&#x27;', "'")
-                        
+                    for i, part in enumerate(parts[1:4]): # Get top 3 organic results
                         title = f"Web Search Result {i+1}"
                         link = "#"
-                        try:
-                            link_part = parts[i].split('<a class="result__url" href="')
-                            if len(link_part) > 1:
-                                link = link_part[1].split('"')[0].strip()
-                            title_part = parts[i].split('<a class="result__snippet"')[0].split('class="result__link">')
-                            if len(title_part) > 1:
-                                title = title_part[1].split('</a>')[0].replace('<b>','').replace('</b>','')
-                        except Exception:
-                            pass
+                        snippet = ""
+                        
+                        # Extract Link
+                        link_match = re.search(r'href=["\'](?:https?:)?//duckduckgo\.com/l/\?uddg=([^&"\']+)', part)
+                        if link_match:
+                            link = urllib.parse.unquote(link_match.group(1))
+                            
+                        # Extract Title
+                        title_match = re.search(r'class="result__a"[^>]*>(.*?)</a>', part, re.DOTALL)
+                        if title_match:
+                            title = title_match.group(1)
+                            title = re.sub(r'<[^>]+>', '', title)
+                            title = html.unescape(title).strip()
+                            
+                        # Extract Snippet
+                        snippet_match = re.search(r'class="result__snippet"[^>]*>(.*?)</a>', part, re.DOTALL)
+                        if snippet_match:
+                            snippet = snippet_match.group(1)
+                            snippet = re.sub(r'<[^>]+>', '', snippet)
+                            snippet = html.unescape(snippet).strip()
                             
                         results.append({
                             "title": title,
