@@ -32,7 +32,7 @@ class AIService:
         # Check if Gemini API key is configured
         if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
             # Fallback to smart local simulation with advice warning
-            local_fallback = AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion)
+            local_fallback = AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
             return (
                 "⚠️ **[SYSTEM NOTICE]**: Live LLM connection requires your `GEMINI_API_KEY` set in `backend/.env`. "
                 f"Falling back to local simulation:\n\n{local_fallback}"
@@ -52,8 +52,7 @@ class AIService:
             "1. You are having an informal, real-time friendly conversation with the user. Talk like a real, supportive human companion!\n"
             "2. Below the user's message, you may see a 'BACKGROUND CONTEXT' section containing memories and emotional state.\n"
             "3. Use this context SILENTLY to make your replies more personalization-aware and warm. "
-            "4. NEVER list, repeat, or explicitly mention these background facts/memories unless the user's current message directly asks you about them. "
-            "If they just say 'hello' or ask 'how are you', respond with a warm, natural conversational reply (e.g. 'Hey! I am doing great, ready to chat. How are you today?').\n"
+            "4. NEVER list, repeat, or explicitly mention these background facts/memories unless the user's current message directly asks you about them or asks a question about themselves (e.g. 'what is my favorite color?', 'do you remember my job?'). In those cases, retrieve the fact from the background context and state it clearly and directly as the truth!\n"
             "5. Keep your tone natural and engaging. Do not output raw markdown status reports or structured headers unless the user asks you for a structured plan."
         )
 
@@ -117,17 +116,37 @@ class AIService:
                         text = parts[0].get("text", "") if parts else ""
                         if text:
                             return text
-                    return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion)
+                    return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
                 else:
                     print(f"Warning: Gemini API returned status {response.status_code}. Activating silent local fallback.")
-                    return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion)
+                    return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
         except Exception as e:
             print(f"Warning: Exception calling Gemini API: {e}. Activating silent local fallback.")
-            return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion)
+            return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
 
     @staticmethod
-    def generate_mock_fallback(companion_id: str, message: str, tone: str, primary_emotion: str = "neutral") -> str:
+    def generate_mock_fallback(companion_id: str, message: str, tone: str, primary_emotion: str = "neutral", rag_context: str = "") -> str:
         lower = message.lower().strip()
+        
+        # Check for direct personal questions and try to retrieve from RAG context
+        if any(w in lower for w in ["what is my", "who is my", "do you remember my", "tell me my"]):
+            if rag_context:
+                lines = [line.strip() for line in rag_context.splitlines() if line.strip().startswith("- ")]
+                for line in lines:
+                    fact_part = line.split("]", 1)[-1].strip() if "]" in line else line.replace("- ", "").strip()
+                    # Check if the fact matches keywords in the user's question
+                    question_words = [w for w in lower.split() if len(w) > 3 and w not in ["what", "your", "remember"]]
+                    if any(qw in fact_part.lower() for qw in question_words):
+                        cleaned_fact = fact_part
+                        if cleaned_fact.lower().startswith("my "):
+                            cleaned_fact = "your " + cleaned_fact[3:]
+                        elif cleaned_fact.lower().startswith("favorite "):
+                            cleaned_fact = "your favorite " + cleaned_fact[9:]
+                            
+                        cleaned_fact = cleaned_fact.capitalize()
+                        if not cleaned_fact.endswith("."):
+                            cleaned_fact += "."
+                        return f"According to your saved memories: {cleaned_fact}"
         
         # Check primary emotion first for customized emotional fallback replies
         if primary_emotion == "excited":
