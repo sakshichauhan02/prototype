@@ -26,12 +26,13 @@ class AIService:
         tone: str = "Analytical",
         rag_context: str = "",
         emotion_modifier: str = "",
-        research_context: str = ""
+        research_context: str = "",
+        primary_emotion: str = "neutral"
     ) -> str:
         # Check if Gemini API key is configured
         if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
             # Fallback to smart local simulation with advice warning
-            local_fallback = AIService.generate_mock_fallback(companion_id, message, tone)
+            local_fallback = AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion)
             return (
                 "⚠️ **[SYSTEM NOTICE]**: Live LLM connection requires your `GEMINI_API_KEY` set in `backend/.env`. "
                 f"Falling back to local simulation:\n\n{local_fallback}"
@@ -55,6 +56,9 @@ class AIService:
             "If they just say 'hello' or ask 'how are you', respond with a warm, natural conversational reply (e.g. 'Hey! I am doing great, ready to chat. How are you today?').\n"
             "5. Keep your tone natural and engaging. Do not output raw markdown status reports or structured headers unless the user asks you for a structured plan."
         )
+
+        if emotion_modifier:
+            system_instructions += f"\n\n[ACTIVE EMOTIONAL STYLE GUIDE]:\n{emotion_modifier}\nYou MUST dynamically override your default traits and tone to align with this emotional dynamics guide."
 
         # Build message history context for Gemini API
         contents = []
@@ -113,18 +117,51 @@ class AIService:
                         text = parts[0].get("text", "") if parts else ""
                         if text:
                             return text
-                    return AIService.generate_mock_fallback(companion_id, message, tone)
+                    return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion)
                 else:
                     print(f"Warning: Gemini API returned status {response.status_code}. Activating silent local fallback.")
-                    return AIService.generate_mock_fallback(companion_id, message, tone)
+                    return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion)
         except Exception as e:
             print(f"Warning: Exception calling Gemini API: {e}. Activating silent local fallback.")
-            return AIService.generate_mock_fallback(companion_id, message, tone)
+            return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion)
 
     @staticmethod
-    def generate_mock_fallback(companion_id: str, message: str, tone: str) -> str:
+    def generate_mock_fallback(companion_id: str, message: str, tone: str, primary_emotion: str = "neutral") -> str:
         lower = message.lower().strip()
         
+        # Check primary emotion first for customized emotional fallback replies
+        if primary_emotion == "excited":
+            if companion_id == "aria":
+                return "Oh, that is absolutely wonderful news! 🎉 Huge congratulations on getting selected! I am incredibly happy to hear this win. Let's analyze how this impacts our project trajectory!"
+            elif companion_id == "leo":
+                return "Oh my goodness, congratulations! 🌟🎉 That is amazing news! I am absolutely thrilled for you! Let's celebrate this wonderful win together. Tell me more about it!"
+            else:
+                return "Congratulations on getting selected! That is an outstanding accomplishment. 🎉 Let's channel this positive momentum into our dev tasks!"
+                
+        elif primary_emotion == "sad":
+            if companion_id == "aria":
+                return "I am very sorry to hear that you are feeling sad and disappointed today. It is completely natural to feel this way. Let's take a pause. I am here to support you in whatever way you need."
+            elif companion_id == "leo":
+                return "Oh, I'm sending you the warmest hug right now. ❤️ I am so sorry you're feeling down and disappointed today. Please know I'm here to listen. You don't have to face this alone. How are you holding up?"
+            else:
+                return "I am sorry to hear you're feeling down today. Please let me know how I can help or if you want to take a break from coding. I am here to support you."
+
+        elif primary_emotion == "frustrated":
+            if companion_id == "aria":
+                return "I completely understand your frustration. It is entirely logical to feel annoyed when things don't work smoothly. Let's patiently troubleshoot the issue step-by-step."
+            elif companion_id == "leo":
+                return "I hear you, and your frustration is totally valid. It's so annoying when that happens! Let's take a deep breath together. I'm here with you, and we'll figure it out."
+            else:
+                return "I understand your frustration. Let's systematically review the code or workflow parameters to debug and fix what's causing the issue."
+
+        elif primary_emotion == "stressed":
+            if companion_id == "aria":
+                return "I hear you. High stress is optimal to address with calm, structured steps. Take a deep breath. Let's simplify your immediate tasks to relieve the pressure."
+            elif companion_id == "leo":
+                return "Please take a gentle breath. I know things feel completely overwhelming right now, but you're doing great. Let's take things one tiny step at a time. I'm right here."
+            else:
+                return "Let's pause and break things down. Stressed situations are best resolved with micro-milestones. Let me help you handle the heavy lifting."
+
         # 1. Greetings
         if any(w in lower for w in ["hello", "hi", "hey", "hola", "howdy", "wassup"]):
             if companion_id == "aria":

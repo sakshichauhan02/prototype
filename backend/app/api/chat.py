@@ -85,14 +85,17 @@ async def send_message(
     except Exception as e:
         print(f"Failed to query privacy settings: {e}")
 
-    # Emotion Detection
+    # Run emotion analysis and intent detection in parallel to optimize latency
+    import asyncio
     from app.services.emotion_service import emotion_service
-    emotion_snap = await emotion_service.analyze_emotion(msg_in.content)
-    emotion_modifier = emotion_service.get_adaptive_prompt_modifier(emotion_snap["primary_emotion"])
-
-    # Task/Agent Detection
     from app.services.agent_service import agent_service
-    agent_intent = await agent_service.detect_task_intent(msg_in.content)
+    
+    emotion_task = emotion_service.analyze_emotion(msg_in.content)
+    intent_task = agent_service.detect_task_intent(msg_in.content)
+    
+    emotion_snap, agent_intent = await asyncio.gather(emotion_task, intent_task)
+    pe = emotion_snap.get("primary_emotion", "neutral")
+    emotion_modifier = emotion_service.get_adaptive_prompt_modifier(pe)
     
     # Log user message (if NOT in private mode)
     user_msg = None
@@ -161,16 +164,28 @@ async def send_message(
                 "content": m.content
             })
         
+        # Dynamically adapt tone based on user emotion
+        user_tone = current_user.tone
+        if pe == "excited":
+            user_tone = "Enthusiastic"
+        elif pe == "sad":
+            user_tone = "Supportive"
+        elif pe == "frustrated":
+            user_tone = "Patient"
+        elif pe == "stressed":
+            user_tone = "Reassuring"
+            
         # Trigger companion reply generation with modified instruction
         ai_reply_content = await ai_service.generate_reply(
             companion_id=thread.companion_id,
             message=msg_in.content,
             history=history,
             temperature=current_user.temperature,
-            tone=current_user.tone,
+            tone=user_tone,
             rag_context=rag_context,
             emotion_modifier=emotion_modifier,
-            research_context=research_context
+            research_context=research_context,
+            primary_emotion=pe
         )
 
     # Log AI message (if NOT in private mode)
