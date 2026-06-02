@@ -31,21 +31,42 @@ class MemoryService:
     async def extract_important_fact(message: str) -> Optional[Dict[str, str]]:
         """
         Uses Gemini LLM to detect if there is any long-term fact to remember.
-        Uses a fast first-pass keyword filter to completely skip remote LLM calls for regular chat and greetings.
+        Uses an improved first-pass check to skip simple questions, greetings, and short chat messages.
         """
-        msg_lower = message.lower()
+        msg_lower = message.lower().strip()
         
-        # Smart pre-filter: Only extract if it contains active intent to share long-term facts
-        fact_indicators = ["remember that", "i love", "i like", "my favorite", "i work as", "i live in", "my goal is"]
-        if not any(indicator in msg_lower for indicator in fact_indicators):
+        # 1. Skip short responses or greetings
+        if len(message) < 8:
+            return None
+            
+        greetings = {"hello", "hi", "hey", "hola", "howdy", "good morning", "good afternoon", "good evening", "thanks", "thank you", "ok", "okay", "yes", "no", "cool", "awesome"}
+        words = set(msg_lower.split())
+        if words.intersection(greetings) and len(words) <= 3:
+            return None
+            
+        # 2. Skip direct questions to the AI
+        if "?" in message:
             return None
 
+        # Fallback local parser when Gemini API key is missing
         if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
-            # Trivial local fallback for demo mode
+            fact_indicators = ["remember that", "i love", "i like", "my favorite", "i work as", "i live in", "my goal is", "i am", "i want to", "prefer"]
+            if not any(indicator in msg_lower for indicator in fact_indicators):
+                return None
+            
+            # Extract clean fact description locally
             fact = message.strip()
+            # If starting with "remember that", clean it
+            if msg_lower.startswith("remember that"):
+                fact = message[13:].strip()
+                
             category = "Preferences"
-            if "learn" in msg_lower or "code" in msg_lower or "build" in msg_lower:
+            if any(w in msg_lower for w in ["learn", "code", "build", "typescript", "react", "python", "developer"]):
                 category = "Technical"
+            elif any(w in msg_lower for w in ["goal", "target", "want to", "plan to", "achieve"]):
+                category = "Goals"
+            elif any(w in msg_lower for w in ["live", "work", "name", "from"]):
+                category = "Personal"
             return {"fact": fact, "category": category}
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={settings.GEMINI_API_KEY}"

@@ -46,9 +46,52 @@ class QdrantService:
 
     async def generate_embedding(self, text: str) -> List[float]:
         """
-        Generates 768-dimensional embeddings. Uses a fast local deterministic hash-based embedding
-        fallback to completely save precious Google Gemini API key quota limits.
+        Generates 768-dimensional embeddings using the Google Gemini embedding model API
+        if GEMINI_API_KEY is configured. Falls back to a deterministic local hash-based embedding.
         """
+        if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip():
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={settings.GEMINI_API_KEY}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "model": "models/text-embedding-004",
+                "content": {
+                    "parts": [{"text": text}]
+                }
+            }
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(url, json=payload, headers=headers)
+                    if response.status_code == 200:
+                        data = response.json()
+                        embedding = data.get("embedding", {}).get("values", [])
+                        if len(embedding) == 768:
+                            return embedding
+                        else:
+                            print(f"Warning: Gemini embedding returned vector size {len(embedding)} instead of 768. Trying fallback model.")
+                    else:
+                        print(f"Warning: Gemini embedding API returned status {response.status_code}. Trying fallback model.")
+            except Exception as e:
+                print(f"Warning: Exception calling Gemini embedding API: {e}. Trying fallback model.")
+
+            # Fallback to embedding-001
+            url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key={settings.GEMINI_API_KEY}"
+            payload_fallback = {
+                "model": "models/embedding-001",
+                "content": {
+                    "parts": [{"text": text}]
+                }
+            }
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(url_fallback, json=payload_fallback, headers=headers)
+                    if response.status_code == 200:
+                        data = response.json()
+                        embedding = data.get("embedding", {}).get("values", [])
+                        if len(embedding) == 768:
+                            return embedding
+            except Exception as e:
+                print(f"Warning: Exception calling fallback embedding-001: {e}")
+
         return self._generate_hash_fallback_embedding(text)
 
     def _generate_hash_fallback_embedding(self, text: str) -> List[float]:
