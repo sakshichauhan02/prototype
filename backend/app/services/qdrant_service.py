@@ -10,21 +10,37 @@ class QdrantService:
     def __init__(self):
         self._client = None
         self.collection_name = "user_memories"
+        self._qdrant_available = True
         
     @property
     def client(self) -> QdrantClient:
         if self._client is None:
-            if settings.QDRANT_URL:
-                self._client = QdrantClient(
-                    url=settings.QDRANT_URL,
-                    api_key=settings.QDRANT_API_KEY
-                )
-            else:
-                # Use local persistent storage
-                os.makedirs(settings.QDRANT_PATH, exist_ok=True)
-                self._client = QdrantClient(path=settings.QDRANT_PATH)
-            
-            self._ensure_collection()
+            try:
+                if settings.QDRANT_URL and settings.QDRANT_URL.strip():
+                    # Use remote Qdrant Cloud instance
+                    self._client = QdrantClient(
+                        url=settings.QDRANT_URL,
+                        api_key=settings.QDRANT_API_KEY
+                    )
+                else:
+                    # Attempt local persistent storage, fallback to in-memory
+                    try:
+                        os.makedirs(settings.QDRANT_PATH, exist_ok=True)
+                        self._client = QdrantClient(path=settings.QDRANT_PATH)
+                    except Exception as path_err:
+                        print(f"Qdrant local path failed ({path_err}), falling back to in-memory mode.")
+                        self._client = QdrantClient(location=":memory:")
+                
+                self._ensure_collection()
+                self._qdrant_available = True
+            except Exception as e:
+                print(f"Qdrant client initialization failed: {e}. Vector search disabled.")
+                self._qdrant_available = False
+                self._client = QdrantClient(location=":memory:")
+                try:
+                    self._ensure_collection()
+                except Exception:
+                    pass
         return self._client
         
     def _ensure_collection(self):
@@ -39,10 +55,13 @@ class QdrantService:
             try:
                 self._client.get_collection(self.collection_name)
             except Exception:
-                self._client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config=VectorParams(size=768, distance=Distance.COSINE)
-                )
+                try:
+                    self._client.create_collection(
+                        collection_name=self.collection_name,
+                        vectors_config=VectorParams(size=768, distance=Distance.COSINE)
+                    )
+                except Exception as e:
+                    print(f"Could not create Qdrant collection: {e}")
 
     async def generate_embedding(self, text: str) -> List[float]:
         """
@@ -105,52 +124,62 @@ class QdrantService:
         return embedding
 
     async def upsert_memory(self, user_id: int, memory_id: int, fact: str, category: str):
-        vector = await self.generate_embedding(fact)
-        self.client.upsert(
-            collection_name=self.collection_name,
-            points=[
-                PointStruct(
-                    id=memory_id,
-                    vector=vector,
-                    payload={
-                        "user_id": user_id,
-                        "fact": fact,
-                        "category": category
-                    }
-                )
-            ]
-        )
-
-    async def delete_memory(self, memory_id: int):
-        self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=[memory_id]
-        )
-
-    async def search_memories(self, user_id: int, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        vector = await self.generate_embedding(query)
-        search_result = self.client.query_points(
-            collection_name=self.collection_name,
-            query=vector,
-            query_filter=Filter(
-                must=[
-                    FieldCondition(
-                        key="user_id",
-                        match=MatchValue(value=user_id)
+        try:
+            vector = await self.generate_embedding(fact)
+            self.client.upsert(
+                collection_name=self.collection_name,
+                points=[
+                    PointStruct(
+                        id=memory_id,
+                        vector=vector,
+                        payload={
+                            "user_id": user_id,
+                            "fact": fact,
+                            "category": category
+                        }
                     )
                 ]
-            ),
-            limit=limit
-        )
-        
-        results = []
-        for hit in search_result.points:
-            results.append({
-                "id": hit.id,
-                "fact": hit.payload.get("fact"),
-                "category": hit.payload.get("category"),
-                "score": hit.score
-            })
-        return results
+            )
+        except Exception as e:
+            print(f"Qdrant upsert_memory failed (non-fatal): {e}")
+
+    async def delete_memory(self, memory_id: int):
+        try:
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=[memory_id]
+            )
+        except Exception as e:
+            print(f"Qdrant delete_memory failed (non-fatal): {e}")
+
+    async def search_memories(self, user_id: int, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        try:
+            vector = await self.generate_embedding(query)
+            search_result = self.client.query_points(
+                collection_name=self.collection_name,
+                query=vector,
+                query_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="user_id",
+                            match=MatchValue(value=user_id)
+                        )
+                    ]
+                ),
+                limit=limit
+            )
+            
+            results = []
+            for hit in search_result.points:
+                results.append({
+                    "id": hit.id,
+                    "fact": hit.payload.get("fact"),
+                    "category": hit.payload.get("category"),
+                    "score": hit.score
+                })
+            return results
+        except Exception as e:
+            print(f"Qdrant search_memories failed (non-fatal): {e}")
+            return []
 
 qdrant_service = QdrantService()

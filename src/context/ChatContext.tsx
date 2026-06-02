@@ -543,6 +543,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           setIsTyping(false);
           await streamMessageReply(data.content);
           await syncThreads();
+          await syncMemories(); // Refresh memory dashboard after each message
           return;
         }
       } catch (e) {

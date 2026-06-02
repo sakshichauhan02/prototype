@@ -171,32 +171,40 @@ class MemoryService:
             if not extracted.get("fact") or not extracted.get("category"):
                 continue
                 
-            # Encrypt the fact for resting SQL storage
-            encrypted_fact = MemoryService.encrypt_fact(extracted["fact"])
+            plain_fact = extracted["fact"].strip()
+            category = extracted["category"]
             
-            new_memory = Memory(
-                fact=encrypted_fact,
-                category=extracted["category"],
-                user_id=user_id,
-                source="chat"
-            )
-            db.add(new_memory)
-            await db.commit()
-            await db.refresh(new_memory)
+            # Encrypt the fact for resting SQL storage
+            encrypted_fact = MemoryService.encrypt_fact(plain_fact)
             
             try:
-                # Index the plain-text version in Qdrant for semantic match capability
+                new_memory = Memory(
+                    fact=encrypted_fact,
+                    category=category,
+                    user_id=user_id,
+                    source="chat"
+                )
+                db.add(new_memory)
+                await db.commit()
+                await db.refresh(new_memory)
+            except Exception as e:
+                print(f"Failed to save memory to SQL: {e}")
+                await db.rollback()
+                continue
+            
+            # Index in Qdrant (non-blocking — never crashes the request)
+            try:
                 await qdrant_service.upsert_memory(
                     user_id=user_id,
                     memory_id=new_memory.id,
-                    fact=extracted["fact"],
-                    category=new_memory.category
+                    fact=plain_fact,
+                    category=category
                 )
             except Exception as e:
-                print(f"Failed to sync message memory to Qdrant: {e}")
+                print(f"Qdrant upsert skipped (non-fatal): {e}")
                 
             # Decrypt back for internal list return
-            new_memory.fact = extracted["fact"]
+            new_memory.fact = plain_fact
             saved_memories.append(new_memory)
             
         return saved_memories
