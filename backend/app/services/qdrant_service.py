@@ -69,13 +69,14 @@ class QdrantService:
         if GEMINI_API_KEY is configured. Falls back to a deterministic local hash-based embedding.
         """
         if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip():
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={settings.GEMINI_API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={settings.GEMINI_API_KEY}"
             headers = {"Content-Type": "application/json"}
             payload = {
-                "model": "models/text-embedding-004",
                 "content": {
                     "parts": [{"text": text}]
-                }
+                },
+                "taskType": "RETRIEVAL_DOCUMENT",
+                "outputDimensionality": 768
             }
             try:
                 async with httpx.AsyncClient(timeout=10.0) as client:
@@ -86,19 +87,20 @@ class QdrantService:
                         if len(embedding) == 768:
                             return embedding
                         else:
-                            print(f"Warning: Gemini embedding returned vector size {len(embedding)} instead of 768. Trying fallback model.")
+                            print(f"Warning: Gemini embedding-2 returned vector size {len(embedding)} instead of 768. Trying fallback model.")
                     else:
-                        print(f"Warning: Gemini embedding API returned status {response.status_code}. Trying fallback model.")
+                        print(f"Warning: Gemini embedding-2 API returned status {response.status_code}. Trying fallback model.")
             except Exception as e:
-                print(f"Warning: Exception calling Gemini embedding API: {e}. Trying fallback model.")
+                print(f"Warning: Exception calling Gemini embedding-2 API: {e}. Trying fallback model.")
 
-            # Fallback to embedding-001
-            url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key={settings.GEMINI_API_KEY}"
+            # Fallback to gemini-embedding-001
+            url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={settings.GEMINI_API_KEY}"
             payload_fallback = {
-                "model": "models/embedding-001",
                 "content": {
                     "parts": [{"text": text}]
-                }
+                },
+                "taskType": "RETRIEVAL_DOCUMENT",
+                "outputDimensionality": 768
             }
             try:
                 async with httpx.AsyncClient(timeout=10.0) as client:
@@ -109,7 +111,7 @@ class QdrantService:
                         if len(embedding) == 768:
                             return embedding
             except Exception as e:
-                print(f"Warning: Exception calling fallback embedding-001: {e}")
+                print(f"Warning: Exception calling fallback gemini-embedding-001: {e}")
 
         return self._generate_hash_fallback_embedding(text)
 

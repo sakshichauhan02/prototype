@@ -134,7 +134,7 @@ class AgentService:
             draft_text = ""
             if settings.GEMINI_API_KEY:
                 try:
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
                     payload = {"contents": [{"parts": [{"text": draft_prompt}]}]}
                     async with httpx.AsyncClient(timeout=10.0) as client:
                         r = await client.post(url, json=payload)

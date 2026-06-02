@@ -30,7 +30,7 @@ async def query_web_research(
     takeaways = []
     if settings.GEMINI_API_KEY and raw_sources:
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
             snippets_txt = "\n".join([f"- [{s['title']}] {s['snippet']}" for s in raw_sources])
             prompt = (
                 f"Based on the following search results for the query '{req.query}', write a concise, informative summary (max 3 sentences) "
