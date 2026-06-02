@@ -44,8 +44,8 @@ class AgentService:
             }
 
         # 4. Research Agent
-        elif any(w in msg_lower for w in ["research about", "deep research on", "find details on", "research project"]):
-            match = re.search(r"(?:research about|deep research on|find details on|research project)\s+(.*)", msg_lower)
+        elif any(w in msg_lower for w in ["research about", "deep research on", "find details on", "research project", "research ", "search "]):
+            match = re.search(r"(?:research about|deep research on|find details on|research project|research|search)\s+(.*)", msg_lower)
             topic = match.group(1).strip() if match else "topic"
             return {
                 "agent": "Research Agent",
