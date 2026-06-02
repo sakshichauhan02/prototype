@@ -204,6 +204,42 @@ class MemoryService:
             plain_fact = extracted["fact"].strip()
             category = extracted["category"]
             
+            # Conflict Resolution:
+            # If the new fact updates a previous statement (e.g., favorite color, current city, job),
+            # clean up old contradicting records.
+            try:
+                # Find all existing memories for this user
+                stmt = select(Memory).where(Memory.user_id == user_id)
+                result = await db.execute(stmt)
+                existing_records = result.scalars().all()
+                
+                # Check for conflicts
+                conflict_keywords = [
+                    ["favorite color"],
+                    ["live in", "living in", "reside in", "hometown"],
+                    ["work as", "job is", "occupation", "employed as"],
+                    ["favorite language", "coding language", "programming language"]
+                ]
+                
+                for keywords in conflict_keywords:
+                    # If the new fact matches this group of keywords
+                    if any(kw in plain_fact.lower() for kw in keywords):
+                        # Find existing records that also match this group of keywords
+                        for record in existing_records:
+                            decrypted = MemoryService.decrypt_fact(record.fact)
+                            if any(kw in decrypted.lower() for kw in keywords):
+                                # Delete contradicting memory from SQL & Qdrant
+                                print(f"Resolving memory conflict: deleting old memory: '{decrypted}'")
+                                await db.delete(record)
+                                try:
+                                    await qdrant_service.delete_memory(record.id)
+                                except Exception:
+                                    pass
+                await db.commit()
+            except Exception as conflict_err:
+                print(f"Memory conflict resolution warning: {conflict_err}")
+                await db.rollback()
+            
             # Encrypt the fact for resting SQL storage
             encrypted_fact = MemoryService.encrypt_fact(plain_fact)
             
