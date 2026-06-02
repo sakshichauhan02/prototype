@@ -25,7 +25,8 @@ class AIService:
         temperature: float = 0.5,
         tone: str = "Analytical",
         rag_context: str = "",
-        emotion_modifier: str = ""
+        emotion_modifier: str = "",
+        research_context: str = ""
     ) -> str:
         # Check if Gemini API key is configured
         if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
@@ -67,6 +68,11 @@ class AIService:
                 
         # Append current user prompt with isolated background context
         prompt_payload = message
+        
+        # Inject active research context if available
+        if research_context:
+            prompt_payload += f"\n\n[ACTIVE RESEARCH CONTEXT - REFER TO THIS TO ANSWER THE USER'S FOLLOW-UP]:\n{research_context}"
+
         if rag_context or emotion_modifier:
             prompt_payload += "\n\n[SYSTEM INFO: SILENT BACKGROUND CONTEXT - DO NOT EXPLICITLY MENTION UNLESS RELEVANT]"
             if rag_context:
@@ -81,7 +87,7 @@ class AIService:
         })
 
         # Call Gemini Generative Language API Beta Endpoint
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
         
         headers = {"Content-Type": "application/json"}
         payload = {

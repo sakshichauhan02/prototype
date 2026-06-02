@@ -146,6 +146,13 @@ async def send_message(
             db=db
         )
         
+        # Scan history for active research context
+        research_context = ""
+        for m in reversed(thread.messages):
+            if m.sender == "ai" and "🔍 **[Research Agent Active]**" in m.content:
+                research_context = m.content
+                break
+        
         # History formatting
         history = []
         for m in thread.messages:
@@ -162,7 +169,8 @@ async def send_message(
             temperature=current_user.temperature,
             tone=current_user.tone,
             rag_context=rag_context,
-            emotion_modifier=emotion_modifier
+            emotion_modifier=emotion_modifier,
+            research_context=research_context
         )
 
     # Log AI message (if NOT in private mode)
