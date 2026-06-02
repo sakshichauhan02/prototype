@@ -28,7 +28,7 @@ class MemoryService:
         return encrypted_text
 
     @staticmethod
-    async def extract_important_fact(message: str) -> Optional[Dict[str, str]]:
+    async def extract_important_fact(message: str) -> List[Dict[str, str]]:
         """
         Uses Gemini LLM to detect if there is any long-term fact to remember.
         Uses an improved first-pass check to skip simple questions, greetings, and short chat messages.
@@ -37,37 +37,45 @@ class MemoryService:
         
         # 1. Skip short responses or greetings
         if len(message) < 8:
-            return None
+            return []
             
         greetings = {"hello", "hi", "hey", "hola", "howdy", "good morning", "good afternoon", "good evening", "thanks", "thank you", "ok", "okay", "yes", "no", "cool", "awesome"}
         words = set(msg_lower.split())
         if words.intersection(greetings) and len(words) <= 3:
-            return None
+            return []
             
         # 2. Skip direct questions to the AI
         if "?" in message:
-            return None
+            return []
 
         # Fallback local parser when Gemini API key is missing
         if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
-            fact_indicators = ["remember that", "i love", "i like", "my favorite", "i work as", "i live in", "my goal is", "i am", "i want to", "prefer"]
+            fact_indicators = ["remember that", "i love", "i like", "my favorite", "i work as", "i live in", "my goal is", "i am", "i want to", "prefer", "bought"]
             if not any(indicator in msg_lower for indicator in fact_indicators):
-                return None
+                return []
             
-            # Extract clean fact description locally
-            fact = message.strip()
-            # If starting with "remember that", clean it
-            if msg_lower.startswith("remember that"):
-                fact = message[13:].strip()
+            # Simple splitter for "and" to handle compound sentences in fallback mode
+            parts = [message.strip()]
+            if " and " in msg_lower:
+                idx = msg_lower.find(" and ")
+                parts = [message[:idx].strip(), message[idx+5:].strip()]
                 
-            category = "Preferences"
-            if any(w in msg_lower for w in ["learn", "code", "build", "typescript", "react", "python", "developer"]):
-                category = "Technical"
-            elif any(w in msg_lower for w in ["goal", "target", "want to", "plan to", "achieve"]):
-                category = "Goals"
-            elif any(w in msg_lower for w in ["live", "work", "name", "from"]):
-                category = "Personal"
-            return {"fact": fact, "category": category}
+            results = []
+            for part in parts:
+                part_lower = part.lower().strip()
+                fact = part
+                if part_lower.startswith("remember that"):
+                    fact = part[13:].strip()
+                
+                category = "Preferences"
+                if any(w in part_lower for w in ["learn", "code", "build", "typescript", "react", "python", "developer"]):
+                    category = "Technical"
+                elif any(w in part_lower for w in ["goal", "target", "want to", "plan to", "achieve"]):
+                    category = "Goals"
+                elif any(w in part_lower for w in ["live", "work", "name", "from", "bought", "own"]):
+                    category = "Personal"
+                results.append({"fact": fact, "category": category})
+            return results
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
         headers = {"Content-Type": "application/json"}
@@ -88,12 +96,12 @@ class MemoryService:
             "- 'I am going to bed now'\n"
             "- 'This server is not working'\n"
             "- 'How are you?'\n\n"
-            "If it contains important long-term user information, extract it as a concise, objective third-person fact "
-            "(e.g., 'Loves football', 'Favorite food is sushi', 'Works as a software engineer') and classify it into one of these: "
-            "['Personal', 'Technical', 'Goals', 'Preferences'].\n"
+            "If the message contains important long-term user information, extract it as one or more concise, objective third-person facts "
+            "(e.g., 'Loves football', 'Favorite food is sushi', 'Works as a software engineer', 'Bought a red bicycle') and classify each into one of these: "
+            "['Personal', 'Technical', 'Goals', 'Preferences']. Split compound sentences into multiple distinct facts if they belong to different categories.\n"
             "If the message has no long-term significance, respond with the exact word 'IGNORE'.\n"
             "If saving, respond ONLY with a JSON object in this format:\n"
-            "{\"fact\": \"Concise fact description\", \"category\": \"Personal\"}"
+            "{\"memories\": [{\"fact\": \"Concise fact description\", \"category\": \"Personal\"}]}"
         )
         
         payload = {
@@ -121,7 +129,7 @@ class MemoryService:
                         text = parts[0].get("text", "").strip() if parts else ""
                         
                         if not text or "IGNORE" in text.upper():
-                            return None
+                            return []
                             
                         try:
                             if text.startswith("```json"):
@@ -129,14 +137,16 @@ class MemoryService:
                             elif text.startswith("```"):
                                 text = text.split("```")[1].split("```")[0].strip()
                             parsed = json.loads(text)
-                            if "fact" in parsed and "category" in parsed:
-                                return parsed
+                            if "memories" in parsed:
+                                return parsed["memories"]
+                            elif "fact" in parsed and "category" in parsed:
+                                return [parsed]
                         except json.JSONDecodeError:
                             pass
         except Exception as e:
             print(f"Memory extraction error: {e}")
             
-        return None
+        return []
 
     @staticmethod
     async def process_incoming_message(
@@ -144,43 +154,52 @@ class MemoryService:
         message: str,
         db: AsyncSession,
         consent_memory: bool = True
-    ) -> Optional[Memory]:
+    ) -> List[Memory]:
         """
         Detects, extracts, saves (encrypted), and vectorizes facts from incoming user messages.
         """
         if not consent_memory:
             # Bypassed memory extraction due to settings consent denial
-            return None
+            return []
 
-        extracted = await MemoryService.extract_important_fact(message)
-        if not extracted:
-            return None
+        extracted_list = await MemoryService.extract_important_fact(message)
+        if not extracted_list:
+            return []
             
-        # Encrypt the fact for resting SQL storage
-        encrypted_fact = MemoryService.encrypt_fact(extracted["fact"])
-        
-        new_memory = Memory(
-            fact=encrypted_fact,
-            category=extracted["category"],
-            user_id=user_id,
-            source="chat"
-        )
-        db.add(new_memory)
-        await db.commit()
-        await db.refresh(new_memory)
-        
-        try:
-            # Index the plain-text version in Qdrant for semantic match capability
-            await qdrant_service.upsert_memory(
+        saved_memories = []
+        for extracted in extracted_list:
+            if not extracted.get("fact") or not extracted.get("category"):
+                continue
+                
+            # Encrypt the fact for resting SQL storage
+            encrypted_fact = MemoryService.encrypt_fact(extracted["fact"])
+            
+            new_memory = Memory(
+                fact=encrypted_fact,
+                category=extracted["category"],
                 user_id=user_id,
-                memory_id=new_memory.id,
-                fact=extracted["fact"],
-                category=new_memory.category
+                source="chat"
             )
-        except Exception as e:
-            print(f"Failed to sync message memory to Qdrant: {e}")
+            db.add(new_memory)
+            await db.commit()
+            await db.refresh(new_memory)
             
-        return new_memory
+            try:
+                # Index the plain-text version in Qdrant for semantic match capability
+                await qdrant_service.upsert_memory(
+                    user_id=user_id,
+                    memory_id=new_memory.id,
+                    fact=extracted["fact"],
+                    category=new_memory.category
+                )
+            except Exception as e:
+                print(f"Failed to sync message memory to Qdrant: {e}")
+                
+            # Decrypt back for internal list return
+            new_memory.fact = extracted["fact"]
+            saved_memories.append(new_memory)
+            
+        return saved_memories
 
     @staticmethod
     async def add_memory_manually(user_id: int, fact: str, category: str, db: AsyncSession) -> Memory:
