@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     GOOGLE_CSE_ID: str = ""
     NEWS_API_KEY: str = ""
     N8N_WEBHOOK_URL: str = ""
+    MAKE_WEBHOOK_URL: str = ""
 
     class Config:
         case_sensitive = True

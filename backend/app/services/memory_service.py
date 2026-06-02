@@ -48,34 +48,60 @@ class MemoryService:
         if "?" in message:
             return []
 
+    @staticmethod
+    def _local_fallback_parser(message: str) -> List[Dict[str, str]]:
+        msg_lower = message.lower().strip()
+        fact_indicators = ["remember that", "i love", "i like", "my favorite", "i work as", "i live in", "my goal is", "i am", "i want to", "prefer", "bought"]
+        if not any(indicator in msg_lower for indicator in fact_indicators):
+            return []
+        
+        # Simple splitter for "and" to handle compound sentences in fallback mode
+        parts = [message.strip()]
+        if " and " in msg_lower:
+            idx = msg_lower.find(" and ")
+            parts = [message[:idx].strip(), message[idx+5:].strip()]
+            
+        results = []
+        for part in parts:
+            part_lower = part.lower().strip()
+            fact = part
+            if part_lower.startswith("remember that"):
+                fact = part[13:].strip()
+            
+            category = "Preferences"
+            if any(w in part_lower for w in ["learn", "code", "build", "typescript", "react", "python", "developer"]):
+                category = "Technical"
+            elif any(w in part_lower for w in ["goal", "target", "want to", "plan to", "achieve"]):
+                category = "Goals"
+            elif any(w in part_lower for w in ["live", "work", "name", "from", "bought", "own"]):
+                category = "Personal"
+            results.append({"fact": fact, "category": category})
+        return results
+
+    @staticmethod
+    async def extract_important_fact(message: str) -> List[Dict[str, str]]:
+        """
+        Uses Gemini LLM to detect if there is any long-term fact to remember.
+        Uses an improved first-pass check to skip simple questions, greetings, and short chat messages.
+        """
+        msg_lower = message.lower().strip()
+        
+        # 1. Skip short responses or greetings
+        if len(message) < 8:
+            return []
+            
+        greetings = {"hello", "hi", "hey", "hola", "howdy", "good morning", "good afternoon", "good evening", "thanks", "thank you", "ok", "okay", "yes", "no", "cool", "awesome"}
+        words = set(msg_lower.split())
+        if words.intersection(greetings) and len(words) <= 3:
+            return []
+            
+        # 2. Skip direct questions to the AI
+        if "?" in message:
+            return []
+
         # Fallback local parser when Gemini API key is missing
         if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
-            fact_indicators = ["remember that", "i love", "i like", "my favorite", "i work as", "i live in", "my goal is", "i am", "i want to", "prefer", "bought"]
-            if not any(indicator in msg_lower for indicator in fact_indicators):
-                return []
-            
-            # Simple splitter for "and" to handle compound sentences in fallback mode
-            parts = [message.strip()]
-            if " and " in msg_lower:
-                idx = msg_lower.find(" and ")
-                parts = [message[:idx].strip(), message[idx+5:].strip()]
-                
-            results = []
-            for part in parts:
-                part_lower = part.lower().strip()
-                fact = part
-                if part_lower.startswith("remember that"):
-                    fact = part[13:].strip()
-                
-                category = "Preferences"
-                if any(w in part_lower for w in ["learn", "code", "build", "typescript", "react", "python", "developer"]):
-                    category = "Technical"
-                elif any(w in part_lower for w in ["goal", "target", "want to", "plan to", "achieve"]):
-                    category = "Goals"
-                elif any(w in part_lower for w in ["live", "work", "name", "from", "bought", "own"]):
-                    category = "Personal"
-                results.append({"fact": fact, "category": category})
-            return results
+            return MemoryService._local_fallback_parser(message)
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
         headers = {"Content-Type": "application/json"}
@@ -143,8 +169,12 @@ class MemoryService:
                                 return [parsed]
                         except json.JSONDecodeError:
                             pass
+                else:
+                    print(f"Warning: Gemini extraction API returned status {response.status_code}. Using local fallback parser.")
+                    return MemoryService._local_fallback_parser(message)
         except Exception as e:
-            print(f"Memory extraction error: {e}")
+            print(f"Memory extraction error: {e}. Using local fallback parser.")
+            return MemoryService._local_fallback_parser(message)
             
         return []
 
