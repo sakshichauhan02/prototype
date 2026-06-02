@@ -42,6 +42,8 @@ class WebResearchService:
                             "link": item.get("link")
                         })
                     return results
+                else:
+                    print(f"SerpAPI query failed with status {response.status_code}: {response.text}")
         except Exception as e:
             print(f"SerpAPI call failed: {e}")
         return []
@@ -70,6 +72,8 @@ class WebResearchService:
                             "link": item.get("link")
                         })
                     return results
+                else:
+                    print(f"Google Custom Search API failed with status {response.status_code}: {response.text}")
         except Exception as e:
             print(f"Google Custom Search API call failed: {e}")
         return []
@@ -98,6 +102,8 @@ class WebResearchService:
                             "link": item.get("url")
                         })
                     return results
+                else:
+                    print(f"News API query failed with status {response.status_code}: {response.text}")
         except Exception as e:
             print(f"News API call failed: {e}")
         return []
@@ -121,17 +127,19 @@ class WebResearchService:
                     html_text = response.text
                     parts = html_text.split('result__body')
                     results = []
-                    for i, part in enumerate(parts[1:4]): # Get top 3 organic results
-                        title = f"Web Search Result {i+1}"
+                    for part in parts[1:]:
                         link = "#"
-                        snippet = ""
-                        
                         # Extract Link
                         link_match = re.search(r'href=["\'](?:https?:)?//duckduckgo\.com/l/\?uddg=([^&"\']+)', part)
                         if link_match:
                             link = urllib.parse.unquote(link_match.group(1))
                             
+                        # Filter out ads and invalid links
+                        if "duckduckgo.com/y.js" in link or "ad_domain" in link or link == "#":
+                            continue
+                            
                         # Extract Title
+                        title = f"Web Search Result {len(results) + 1}"
                         title_match = re.search(r'class="result__a"[^>]*>(.*?)</a>', part, re.DOTALL)
                         if title_match:
                             title = title_match.group(1)
@@ -139,6 +147,7 @@ class WebResearchService:
                             title = html.unescape(title).strip()
                             
                         # Extract Snippet
+                        snippet = ""
                         snippet_match = re.search(r'class="result__snippet"[^>]*>(.*?)</a>', part, re.DOTALL)
                         if snippet_match:
                             snippet = snippet_match.group(1)
@@ -150,6 +159,8 @@ class WebResearchService:
                             "snippet": snippet,
                             "link": link
                         })
+                        if len(results) >= 3:
+                            break
                     return results
         except Exception as e:
             print(f"DuckDuckGo fallback search failed: {e}")
