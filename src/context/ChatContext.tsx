@@ -134,6 +134,41 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [apiError, setApiError] = useState<string | null>(null);
   const [bootstrapped, setBootstrapped] = useState(false);
 
+  const addPendingMutation = (type: string, payload: any) => {
+    const pending = JSON.parse(localStorage.getItem("aetheria_pending_mutations") || "[]");
+    pending.push({
+      type,
+      payload,
+      timestamp: new Date().toISOString()
+    });
+    localStorage.setItem("aetheria_pending_mutations", JSON.stringify(pending));
+  };
+
+  const syncOfflineMutations = async (currentToken: string) => {
+    const pendingStr = localStorage.getItem("aetheria_pending_mutations");
+    if (!pendingStr) return;
+    const mutations = JSON.parse(pendingStr);
+    if (mutations.length === 0) return;
+    
+    console.log(`Connection restored! Syncing ${mutations.length} offline mutations to backend...`);
+    try {
+      const res = await fetch(`${API_BASE}/chat/sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${currentToken}`
+        },
+        body: JSON.stringify({ mutations })
+      });
+      if (res.ok) {
+        console.log("Offline mutations synced successfully!");
+        localStorage.removeItem("aetheria_pending_mutations");
+      }
+    } catch (e) {
+      console.warn("Failed to push offline mutations to backend:", e);
+    }
+  };
+
   // Bootstrap a real local backend session when FastAPI is available.
   useEffect(() => {
     const loginDevUser = async () => {
@@ -229,28 +264,39 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         setToken(data.access_token);
         setUser(data.user);
         setBackendOffline(false);
-        setActiveThreadId(null);
       } catch {
         // Keep the visible offline banner if the backend is truly unreachable.
       }
     };
 
-    recoverOnlineSession();
+    const interval = setInterval(recoverOnlineSession, 5000);
+
+    const handleOnline = () => {
+      recoverOnlineSession();
+    };
+    window.addEventListener("online", handleOnline);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("online", handleOnline);
+    };
   }, [backendOffline]);
 
   // Fetch threads and memories whenever token changes or backend status clears
   useEffect(() => {
     if (!bootstrapped) return;
-    if (token) {
-      syncThreads();
-      syncMemories();
-    } else {
+    if (token && !backendOffline) {
+      syncOfflineMutations(token).then(() => {
+        syncThreads();
+        syncMemories();
+      });
+    } else if (!token) {
       // Offline fallback state sets
       setThreads(MOCK_THREADS);
       setActiveThreadId("mock-thread-1");
       setMemories(MOCK_MEMORIES);
     }
-  }, [token, bootstrapped]);
+  }, [token, backendOffline, bootstrapped]);
 
   // Sync Active Companion with thread
   useEffect(() => {
@@ -452,6 +498,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     };
     setThreads((prev) => [newThread, ...prev]);
     setActiveThreadId(newId);
+    addPendingMutation("CREATE_THREAD", { id: newId, companionId, title: defaultTitle });
     return newId;
   };
 
@@ -484,8 +531,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setIsTyping(true);
 
     // Reusable word-by-word streaming effect
-    const streamMessageReply = async (fullContent: string) => {
-      const aiMsgId = `msg-${Date.now()}-ai-streaming`;
+    const streamMessageReply = async (fullContent: string, customAiMsgId?: string) => {
+      const aiMsgId = customAiMsgId || `msg-${Date.now()}-ai-streaming`;
       const aiMessage: Message = {
         id: aiMsgId,
         sender: "ai",
@@ -552,13 +599,17 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Offline response simulation fallback
+    const aiMsgId = `msg-${Date.now()}-ai`;
+    const fallbackReply = (activeCompanion.id === "aria")
+      ? "Hello! I am Aria, your analytical companion. I'm fully online and ready to assist you with data analysis, strategic planning, or deep research. What objective are we analyzing today?"
+      : "Dynamic client fallback: AI Companion loaded. Check uvicorn process status.";
+      
+    addPendingMutation("SEND_MESSAGE", { id: userMsgId, threadId: activeThreadId, sender: "user", content });
+    addPendingMutation("SEND_MESSAGE", { id: aiMsgId, threadId: activeThreadId, sender: "ai", content: fallbackReply });
+
     setTimeout(async () => {
-      const fallbackReply = (activeCompanion.id === "aria")
-        ? "Hello! I am Aria, your analytical companion. I'm fully online and ready to assist you with data analysis, strategic planning, or deep research. What objective are we analyzing today?"
-        : "Dynamic client fallback: AI Companion loaded. Check uvicorn process status.";
-        
       setIsTyping(false);
-      await streamMessageReply(fallbackReply);
+      await streamMessageReply(fallbackReply, aiMsgId);
     }, 1200);
   };
 
@@ -578,6 +629,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
     }
     setThreads((prev) => prev.filter((t) => t.id !== threadId));
+    addPendingMutation("DELETE_THREAD", { id: threadId });
   };
 
   const renameThread = async (threadId: string, newTitle: string) => {
@@ -602,6 +654,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setThreads((prev) =>
       prev.map((t) => (t.id === threadId ? { ...t, title: newTitle } : t))
     );
+    addPendingMutation("RENAME_THREAD", { id: threadId, title: newTitle });
   };
 
   const addMemory = async (fact: string, category: Memory["category"]) => {
@@ -625,13 +678,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
     
     // Client mock add
+    const newId = `mem-${Date.now()}`;
     const newMem: Memory = {
-      id: `mem-${Date.now()}`,
+      id: newId,
       fact,
       category,
       timestamp: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
     };
     setMemories((prev) => [newMem, ...prev]);
+    addPendingMutation("ADD_MEMORY", { id: newId, fact, category });
   };
 
   const deleteMemory = async (id: string) => {
@@ -650,6 +705,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
     }
     setMemories((prev) => prev.filter((m) => m.id !== id));
+    addPendingMutation("DELETE_MEMORY", { id });
   };
 
   const editMemory = async (id: string, fact: string, category: Memory["category"]) => {
@@ -676,6 +732,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setMemories((prev) =>
       prev.map((m) => (m.id === id ? { ...m, fact, category } : m))
     );
+    addPendingMutation("EDIT_MEMORY", { id, fact, category });
   };
 
   return (

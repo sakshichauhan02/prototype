@@ -19,6 +19,10 @@ class Settings(BaseSettings):
         default="",
         validation_alias="GEMINI_API_KEY"
     )
+    GROQ_API_KEY: str = Field(
+        default="",
+        validation_alias="GROQ_API_KEY"
+    )
     QDRANT_PATH: str = "./qdrant_data"
     QDRANT_URL: str = ""
     QDRANT_API_KEY: str = ""

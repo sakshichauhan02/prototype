@@ -1,9 +1,12 @@
 import json
 import httpx
 import base64
+import os
+import hashlib
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from app.config import settings
 from app.models.memory import Memory
 from app.services.qdrant_service import qdrant_service
@@ -12,19 +15,61 @@ class MemoryService:
     @staticmethod
     def encrypt_fact(text: str) -> str:
         """
-        Encrypts memory fact using base64 obfuscation for Rest Encryption compliance.
+        Encrypts memory fact using AES-256-GCM symmetric cryptographic encryption.
         """
-        encoded = base64.b64encode(text.encode("utf-8")).decode("utf-8")
-        return f"aeth_enc:{encoded}"
+        try:
+            key = hashlib.sha256(settings.SECRET_KEY.encode("utf-8")).digest()
+            iv = os.urandom(12)
+            encryptor = Cipher(
+                algorithms.AES(key),
+                modes.GCM(iv)
+            ).encryptor()
+            
+            ciphertext = encryptor.update(text.encode("utf-8")) + encryptor.finalize()
+            combined = iv + encryptor.tag + ciphertext
+            encoded = base64.b64encode(combined).decode("utf-8")
+            return f"aeth_aes:{encoded}"
+        except Exception as e:
+            print(f"Encryption failed: {e}")
+            encoded = base64.b64encode(text.encode("utf-8")).decode("utf-8")
+            return f"aeth_enc:{encoded}"
 
     @staticmethod
     def decrypt_fact(encrypted_text: str) -> str:
         """
-        Decrypts base64-obfuscated fact.
+        Decrypts AES-256-GCM encrypted fact (or legacy base64-obfuscated fact).
         """
-        if encrypted_text and encrypted_text.startswith("aeth_enc:"):
-            encoded = encrypted_text.split("aeth_enc:")[1]
-            return base64.b64decode(encoded.encode("utf-8")).decode("utf-8")
+        if not encrypted_text:
+            return encrypted_text
+            
+        if encrypted_text.startswith("aeth_enc:"):
+            try:
+                encoded = encrypted_text.split("aeth_enc:")[1]
+                return base64.b64decode(encoded.encode("utf-8")).decode("utf-8")
+            except Exception as e:
+                print(f"Legacy decryption failed: {e}")
+                return encrypted_text
+                
+        if encrypted_text.startswith("aeth_aes:"):
+            try:
+                key = hashlib.sha256(settings.SECRET_KEY.encode("utf-8")).digest()
+                raw_payload = base64.b64decode(encrypted_text.split("aeth_aes:")[1].encode("utf-8"))
+                
+                iv = raw_payload[:12]
+                tag = raw_payload[12:28]
+                ciphertext = raw_payload[28:]
+                
+                decryptor = Cipher(
+                    algorithms.AES(key),
+                    modes.GCM(iv, tag)
+                ).decryptor()
+                
+                decrypted = decryptor.update(ciphertext) + decryptor.finalize()
+                return decrypted.decode("utf-8")
+            except Exception as e:
+                print(f"AES decryption failed: {e}")
+                return encrypted_text
+                
         return encrypted_text
 
     @staticmethod

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -48,10 +48,25 @@ async def create_thread(
     return db_thread
 
 
+async def perform_background_memory_extraction(user_id: int, message: str, consent_memory: bool):
+    from app.database import AsyncSessionLocal
+    from app.services.memory_service import memory_service
+    async with AsyncSessionLocal() as db_session:
+        try:
+            await memory_service.process_incoming_message(
+                user_id=user_id,
+                message=message,
+                db=db_session,
+                consent_memory=consent_memory
+            )
+        except Exception as e:
+            print(f"Background memory extraction process error: {e}")
+
 @router.post("/threads/{thread_id}/messages", response_model=MessageResponse)
 async def send_message(
     thread_id: int,
     msg_in: MessageCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -119,18 +134,14 @@ async def send_message(
         except Exception as e:
             print(f"Failed to record emotional snapshot: {e}")
 
-        # Trigger background/inline memory extraction
+        # Trigger background memory extraction
         if consent_memory:
-            try:
-                from app.services.memory_service import memory_service
-                await memory_service.process_incoming_message(
-                    user_id=current_user.id,
-                    message=msg_in.content,
-                    db=db,
-                    consent_memory=consent_memory
-                )
-            except Exception as e:
-                print(f"Memory extraction process error: {e}")
+            background_tasks.add_task(
+                perform_background_memory_extraction,
+                current_user.id,
+                msg_in.content,
+                consent_memory
+            )
 
     # Determine response content
     if agent_intent:
@@ -251,3 +262,213 @@ async def delete_thread(
         
     await db.delete(thread)
     await db.commit()
+
+
+@router.post("/sync", status_code=status.HTTP_200_OK)
+async def bulk_sync(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    import datetime
+    from app.models.memory import Memory
+    from app.services.memory_service import memory_service
+
+    mutations = payload.get("mutations", [])
+    
+    # Sort mutations chronologically by timestamp
+    try:
+        mutations = sorted(mutations, key=lambda m: m.get("timestamp", ""))
+    except Exception:
+        pass
+
+    mock_thread_id_map = {}
+    mock_memory_id_map = {}
+    processed_count = 0
+
+    for mutation in mutations:
+        m_type = mutation.get("type")
+        m_payload = mutation.get("payload", {})
+        m_timestamp_str = mutation.get("timestamp")
+        
+        try:
+            m_timestamp = datetime.datetime.fromisoformat(m_timestamp_str.replace("Z", "+00:00"))
+        except Exception:
+            m_timestamp = datetime.datetime.utcnow()
+
+        if m_type == "CREATE_THREAD":
+            mock_id = m_payload.get("id")
+            title = m_payload.get("title", "New Chat")
+            companion_id = m_payload.get("companionId", "aria")
+            
+            stmt = select(ChatThread).where(
+                ChatThread.user_id == current_user.id,
+                ChatThread.title == title,
+                ChatThread.companion_id == companion_id
+            )
+            result = await db.execute(stmt)
+            existing = result.scalars().first()
+            if existing:
+                mock_thread_id_map[mock_id] = existing.id
+            else:
+                new_thread = ChatThread(
+                    title=title,
+                    companion_id=companion_id,
+                    user_id=current_user.id,
+                    created_at=m_timestamp,
+                    updated_at=m_timestamp
+                )
+                db.add(new_thread)
+                await db.flush()
+                mock_thread_id_map[mock_id] = new_thread.id
+            processed_count += 1
+
+        elif m_type == "RENAME_THREAD":
+            thread_id_str = m_payload.get("id")
+            new_title = m_payload.get("title")
+            
+            thread_id = mock_thread_id_map.get(thread_id_str)
+            if thread_id is None:
+                try:
+                    thread_id = int(thread_id_str)
+                except ValueError:
+                    continue
+                    
+            stmt = select(ChatThread).where(ChatThread.id == thread_id, ChatThread.user_id == current_user.id)
+            result = await db.execute(stmt)
+            thread = result.scalar_one_or_none()
+            if thread:
+                thread_updated = thread.updated_at
+                if thread_updated.tzinfo is None:
+                    thread_updated = thread_updated.replace(tzinfo=datetime.timezone.utc)
+                mutation_tz = m_timestamp.replace(tzinfo=datetime.timezone.utc) if m_timestamp.tzinfo is None else m_timestamp
+                
+                if mutation_tz > thread_updated:
+                    thread.title = new_title
+                    thread.updated_at = m_timestamp
+                    await db.flush()
+            processed_count += 1
+
+        elif m_type == "DELETE_THREAD":
+            thread_id_str = m_payload.get("id")
+            thread_id = mock_thread_id_map.get(thread_id_str)
+            if thread_id is None:
+                try:
+                    thread_id = int(thread_id_str)
+                except ValueError:
+                    continue
+                    
+            stmt = select(ChatThread).where(ChatThread.id == thread_id, ChatThread.user_id == current_user.id)
+            result = await db.execute(stmt)
+            thread = result.scalar_one_or_none()
+            if thread:
+                await db.delete(thread)
+                await db.flush()
+            processed_count += 1
+
+        elif m_type == "SEND_MESSAGE":
+            thread_id_str = m_payload.get("threadId")
+            sender = m_payload.get("sender", "user")
+            content = m_payload.get("content")
+            
+            thread_id = mock_thread_id_map.get(thread_id_str)
+            if thread_id is None:
+                try:
+                    thread_id = int(thread_id_str)
+                except ValueError:
+                    continue
+                    
+            stmt = select(ChatMessage).where(
+                ChatMessage.thread_id == thread_id,
+                ChatMessage.sender == sender,
+                ChatMessage.content == content
+            )
+            result = await db.execute(stmt)
+            existing_msg = result.scalars().first()
+            if not existing_msg:
+                new_msg = ChatMessage(
+                    thread_id=thread_id,
+                    sender=sender,
+                    content=content,
+                    timestamp=m_timestamp
+                )
+                db.add(new_msg)
+                await db.flush()
+            processed_count += 1
+
+        elif m_type == "ADD_MEMORY":
+            mock_id = m_payload.get("id")
+            fact = m_payload.get("fact")
+            category = m_payload.get("category", "Preferences")
+            
+            stmt = select(Memory).where(Memory.user_id == current_user.id)
+            result = await db.execute(stmt)
+            memories = result.scalars().all()
+            
+            duplicate = False
+            for m in memories:
+                decrypted = memory_service.decrypt_fact(m.fact)
+                if decrypted.lower().strip() == fact.lower().strip():
+                    duplicate = True
+                    mock_memory_id_map[mock_id] = m.id
+                    break
+                    
+            if not duplicate:
+                new_mem = await memory_service.add_memory_manually(
+                    user_id=current_user.id,
+                    fact=fact,
+                    category=category,
+                    db=db
+                )
+                mock_memory_id_map[mock_id] = new_mem.id
+            processed_count += 1
+
+        elif m_type == "EDIT_MEMORY":
+            memory_id_str = m_payload.get("id")
+            fact = m_payload.get("fact")
+            category = m_payload.get("category")
+            
+            memory_id = mock_memory_id_map.get(memory_id_str)
+            if memory_id is None:
+                try:
+                    memory_id = int(memory_id_str)
+                except ValueError:
+                    continue
+                    
+            stmt = select(Memory).where(Memory.id == memory_id, Memory.user_id == current_user.id)
+            result = await db.execute(stmt)
+            memory = result.scalar_one_or_none()
+            if memory:
+                memory_timestamp = memory.timestamp
+                if memory_timestamp.tzinfo is None:
+                    memory_timestamp = memory_timestamp.replace(tzinfo=datetime.timezone.utc)
+                mutation_tz = m_timestamp.replace(tzinfo=datetime.timezone.utc) if m_timestamp.tzinfo is None else m_timestamp
+                
+                if mutation_tz > memory_timestamp:
+                    await memory_service.update_memory(
+                        user_id=current_user.id,
+                        memory_id=memory_id,
+                        fact=fact,
+                        category=category,
+                        db=db
+                    )
+            processed_count += 1
+
+        elif m_type == "DELETE_MEMORY":
+            memory_id_str = m_payload.get("id")
+            memory_id = mock_memory_id_map.get(memory_id_str)
+            if memory_id is None:
+                try:
+                    memory_id = int(memory_id_str)
+                except ValueError:
+                    continue
+                    
+            await memory_service.delete_memory(
+                user_id=current_user.id,
+                memory_id=memory_id,
+                db=db
+            )
+            processed_count += 1
+
+    await db.commit()
+    return {"status": "success", "processed_mutations": processed_count}

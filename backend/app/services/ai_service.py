@@ -29,12 +29,12 @@ class AIService:
         research_context: str = "",
         primary_emotion: str = "neutral"
     ) -> str:
-        # Check if Gemini API key is configured
-        if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
+        # Check if Groq API key is configured
+        if not settings.GROQ_API_KEY or settings.GROQ_API_KEY.strip() == "":
             # Fallback to smart local simulation with advice warning
             local_fallback = AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
             return (
-                "⚠️ **[SYSTEM NOTICE]**: Live LLM connection requires your `GEMINI_API_KEY` set in `backend/.env`. "
+                "⚠️ **[SYSTEM NOTICE]**: Live LLM connection requires your `GROQ_API_KEY` set in `backend/.env`. "
                 f"Falling back to local simulation:\n\n{local_fallback}"
             )
             
@@ -59,14 +59,16 @@ class AIService:
         if emotion_modifier:
             system_instructions += f"\n\n[ACTIVE EMOTIONAL STYLE GUIDE]:\n{emotion_modifier}\nYou MUST dynamically override your default traits and tone to align with this emotional dynamics guide."
 
-        # Build message history context for Gemini API
-        contents = []
+        # Build message history context for Groq API
+        messages = [
+            {"role": "system", "content": system_instructions}
+        ]
         if history:
             for turn in history:
-                role = "user" if turn.get("sender") == "user" else "model"
-                contents.append({
+                role = "user" if turn.get("sender") == "user" else "assistant"
+                messages.append({
                     "role": role,
-                    "parts": [{"text": turn.get("content", "")}]
+                    "content": turn.get("content", "")
                 })
                 
         # Append current user prompt with isolated background context
@@ -84,24 +86,23 @@ class AIService:
                 prompt_payload += f"\nUser's emotional state:\n{emotion_modifier}"
             prompt_payload += "\n[SYSTEM INFO END]"
 
-        contents.append({
+        messages.append({
             "role": "user",
-            "parts": [{"text": prompt_payload}]
+            "content": prompt_payload
         })
 
-        # Call Gemini Generative Language API Beta Endpoint
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
+        # Call Groq Chat Completions API
+        url = "https://api.groq.com/openai/v1/chat/completions"
         
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {settings.GROQ_API_KEY}"
+        }
         payload = {
-            "contents": contents,
-            "systemInstruction": {
-                "parts": [{"text": system_instructions}]
-            },
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": 1024
-            }
+            "model": "llama-3.1-8b-instant",
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": 1024
         }
 
         try:
@@ -110,18 +111,17 @@ class AIService:
                 
                 if response.status_code == 200:
                     data = response.json()
-                    candidates = data.get("candidates", [])
-                    if candidates and "content" in candidates[0]:
-                        parts = candidates[0]["content"].get("parts", [])
-                        text = parts[0].get("text", "") if parts else ""
+                    choices = data.get("choices", [])
+                    if choices and "message" in choices[0]:
+                        text = choices[0]["message"].get("content", "")
                         if text:
                             return text
                     return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
                 else:
-                    print(f"Warning: Gemini API returned status {response.status_code}. Activating silent local fallback.")
+                    print(f"Warning: Groq API returned status {response.status_code}. Response: {response.text}. Activating silent local fallback.")
                     return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
         except Exception as e:
-            print(f"Warning: Exception calling Gemini API: {e}. Activating silent local fallback.")
+            print(f"Warning: Exception calling Groq API: {e}. Activating silent local fallback.")
             return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
 
     @staticmethod
