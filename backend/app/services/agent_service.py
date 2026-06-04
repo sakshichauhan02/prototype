@@ -280,4 +280,43 @@ class AgentService:
             
         return {"success": False, "agent": agent, "output": "Agent workflow executed."}
 
+    @staticmethod
+    def route_session_mode(session_mode: str, emotion_snap: Dict[str, Any]) -> str:
+        """
+        Dynamically routes system prompt instructions depending on the selected session_mode.
+        - academic: inject deep learning/tutoring rules.
+        - casual: utilize the Tone Mirroring module built in Task 1.
+        - professional: business assistant mode.
+        - creative: brainstorming mode.
+        """
+        if session_mode == "casual":
+            from app.services.emotion_service import emotion_service
+            return emotion_service.get_tone_mirroring_modifier(emotion_snap)
+            
+        elif session_mode == "academic":
+            return (
+                "\n\n[SESSION MODE: ACADEMIC / TUTOR MODE]:\n"
+                "1. You are in Academic Tutor Mode. Focus on step-by-step learning guidance and deep conceptual explanations.\n"
+                "2. When explaining, break concepts down into digestible parts, use analogies, and ask clarifying questions to check understanding.\n"
+                "3. Encourage intellectual curiosity and remain highly informative."
+            )
+            
+        elif session_mode == "professional":
+            return (
+                "\n\n[SESSION MODE: PROFESSIONAL / BUSINESS ASSISTANT]:\n"
+                "1. You are in Professional Business Mode. Focus on efficiency, structured outputs, and clean professional guidance.\n"
+                "2. Use appropriate bullet points, bold key terms, and keep explanations practical and clear.\n"
+                "3. Ensure the tone is corporate-appropriate, helpful, and highly productive."
+            )
+            
+        elif session_mode == "creative":
+            return (
+                "\n\n[SESSION MODE: CREATIVE / BRAINSTORMING]:\n"
+                "1. You are in Creative Brainstorming Mode. Focus on open-ended ideation, creative thinking, and storytelling elements.\n"
+                "2. Be warm, inspiring, highly supportive, and suggest unique perspectives or narrative arcs.\n"
+                "3. Fuel the user's imagination with engaging questions and friendly encouragement."
+            )
+            
+        return ""
+
 agent_service = AgentService()

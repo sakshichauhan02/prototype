@@ -1,0 +1,162 @@
+================================================================================
+Aetheria Companion Core Engine & Frontend Sync Architecture Summary
+================================================================================
+
+This document outlines the detailed logic steps, objectives, and implementation
+details of each modified/created file in the project. It describes how they
+connect together and specifies all external APIs integrated into the system.
+
+================================================================================
+1. EXTERNAL APIS USED
+================================================================================
+* Groq Chat Completions API
+  - Endpoint: https://api.groq.com/openai/v1/chat/completions
+  - Model: llama-3.1-8b-instant
+  - Objective: Ultra-fast conversation generation and web search results summarization.
+  
+* Hugging Face Inference API
+  - Primary Model: sentence-transformers/all-MiniLM-L6-v2 (384 dimensions)
+  - Fallback Model: BAAI/bge-small-en-v1.5 (384 dimensions)
+  - Endpoint: https://api-inference.huggingface.co/models/...
+  - Objective: Text feature extraction for RAG cognitive memory vectors.
+  
+* DuckDuckGo Search API
+  - Package: duckduckgo_search (resolves to the 'ddgs' package)
+  - Method: Sync text search text() wrapped in asyncio.to_thread() for async-safety.
+  - Fallback: Direct html.duckduckgo.com web scraper.
+  - Objective: Free, credential-less search results mapping title, snippet, and link.
+
+================================================================================
+2. COMPONENT MAP & CONNECTIONS
+================================================================================
+
+      +-------------------------------------------------------------+
+      |                   Next.js Frontend Client                   |
+      |                     (Vercel Hosting)                        |
+      +------------------------------+------------------------------+
+                                     |
+                         [Pushes Offline Queue / 
+                          Polls API Connection]
+                                     |
+                                     v
+      +-------------------------------------------------------------+
+      |                     FastAPI Backend API                     |
+      |                     (Render Hosting)                        |
+      +-------+------------------+-----------------------+----------+
+              |                  |                       |
+              v                  v                       v
+      [chat.py API]     [web_research_service.py]   [memory_service.py]
+              |                  |                       |
+      (Runs background   (Performs DDGS search   (AES-256-GCM
+       memory task)       & calls Groq)           Encrypt / Decrypt)
+              |                  |                       |
+              |                  v                       v
+              |             [Groq LLM]            [Qdrant DB]
+              |       (llama-3.1-8b-instant)    (384-dim Vectors)
+              |                                          ^
+              +------------- [Hugging Face API] ---------+
+                            (all-MiniLM-L6-v2)
+
+================================================================================
+3. DETAILED FILE IMPLEMENTATION DETAILS
+================================================================================
+
+--------------------------------------------------------------------------------
+File: src/context/ChatContext.tsx [Frontend Context]
+--------------------------------------------------------------------------------
+* Objective: 
+  Manages client-side authentication, companions list, active chat threads,
+  memories list, and reconnection/synchronization routines.
+* Logic Steps:
+  1. Offline State Capture: When network requests fail, sets state 'backendOffline = true'.
+  2. Mutation Caching: When offline, intercepts operations (CREATE_THREAD, SEND_MESSAGE,
+     ADD_MEMORY, etc.) and writes them to a localStorage array 'aetheria_pending_mutations'
+     attaching ISO timestamps.
+  3. Reconnection Poller: If backendOffline is true, starts a 5-second interval timer
+     and registers a window "online" listener to ping the backend root.
+  4. Reconcile Sync: Once connection returns, sends the localStorage queue to
+     POST /api/v1/chat/sync, clears the local storage on success, and re-syncs all
+     active data from the DB.
+
+--------------------------------------------------------------------------------
+File: backend/app/api/chat.py [Chat API Router]
+--------------------------------------------------------------------------------
+* Objective:
+  Exposes the chat message endpoints and handles background cognitive operations.
+* Logic Steps:
+  1. Route: POST /threads/{thread_id}/messages
+     - Saves the User message to SQLite.
+     - Detects emotion and user intent in parallel.
+     - Queues memory extraction in a FastAPI 'BackgroundTask' so the primary thread returns
+       an immediate response in under ~5s instead of waiting for LLM + Embeddings.
+     - Calls Groq API or loads agent workflows.
+  2. Route: POST /sync [Bulk Synchronization Endpoint]
+     - Receives list of queued mutations.
+     - Sorts mutations chronologically by client-side timestamps.
+     - Maintained 'mock_thread_id_map' to map local frontend mock IDs (e.g. mock-thread-xyz)
+       to actual database integers, linking messages correctly.
+     - Compares timestamps to discard stale renames/updates.
+     - Deduplicates messages and memories to prevent write duplication.
+
+--------------------------------------------------------------------------------
+File: backend/app/services/memory_service.py [Cognitive Vault Engine]
+--------------------------------------------------------------------------------
+* Objective:
+  Extracts long-term user facts, encrypts them at rest in SQL, and manages vector indexes.
+* Logic Steps:
+  1. Encryption: encrypt_fact(text) generates a random 12-byte secure initialization
+     vector (IV) using os.urandom(12). Cryptography module performs AES-256-GCM symmetric
+     encryption. Payload is concatenated as 'IV + Tag + Ciphertext', base64 encoded,
+     and stored with prefix 'aeth_aes:'.
+  2. Decryption: decrypt_fact(text) checks the prefix:
+     - 'aeth_aes:': performs AES-256-GCM decryption, verifying GCM authentication tag.
+     - 'aeth_enc:': legacy fallback that performs Base64 decoding (ensures backward compatibility).
+  3. Vectorization: Extracts facts using Gemini, hashes/syncs vectors to Qdrant.
+
+--------------------------------------------------------------------------------
+File: backend/app/services/web_research_service.py [Search Agent Service]
+--------------------------------------------------------------------------------
+* Objective:
+  Runs live search queries and synthesizes findings into a concise context summary.
+* Logic Steps:
+  1. perform_ddg_search: Imports 'DDGS' dynamically trying 'ddgs' first (v9+) and
+     'duckduckgo_search' (v8) as fallback. Runs the search in asyncio.to_thread() to prevent
+     blocking the event loop.
+  2. perform_ddg_fallback_scraping: If the library is rate-capped or raises exceptions,
+     parses DuckDuckGo HTML using regex and urllib.
+  3. search_and_summarize: Fetches raw search results, compiles them as markdown sources, and
+     calls Groq API (llama-3.1-8b-instant) with a customized prompt instructing it to return
+     a factual summary of max 4 sentences.
+
+--------------------------------------------------------------------------------
+File: backend/app/services/qdrant_service.py [Vector Database Service]
+--------------------------------------------------------------------------------
+* Objective:
+  Manages semantic embedding creation and queries in Qdrant.
+* Logic Steps:
+  1. Schema Validation: Checks Qdrant collection on start. If collection dimension is not
+     exactly 384, deletes and recreates it.
+  2. Feature Extraction: Calls Hugging Face inference API for sentence-transformers/all-MiniLM-L6-v2.
+     On error, falls back to BAAI/bge-small-en-v1.5. On complete network failure, uses a deterministic
+     hash-based generator yielding a 384-dimensional mock vector.
+
+--------------------------------------------------------------------------------
+File: backend/app/services/ai_service.py [LLM Service]
+--------------------------------------------------------------------------------
+* Objective:
+  Builds dialog context and returns chat responses.
+* Logic Steps:
+  1. API Mapping: Maps system messages and thread histories into standard chat messages.
+  2. Groq Completion: Sends the payload to api.groq.com. Fallbacks silently to mock local companion
+     heuristics on connection exceptions or 401/429 status codes.
+
+================================================================================
+4. VERIFICATION SCRIPTS (Located in backend/scratch/)
+================================================================================
+* test_search_integration.py: Validates live DuckDuckGo structured search queries and Groq summaries.
+* test_background_memory.py: Verifies background task execution latency (<5s) and storage.
+* test_encryption_upgrade.py: Tests AES-256-GCM encryption/decryption, legacy compatibility,
+  and bit-flip authentication tag tempering failure checks.
+* test_sync_engine.py: Tests API synchronization endpoint, ID translation, and conflict logic.
+* test_live_render.py: Runs production validation checks directly on the Render live URL.
+================================================================================

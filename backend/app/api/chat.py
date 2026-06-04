@@ -36,7 +36,8 @@ async def create_thread(
     new_thread = ChatThread(
         title=thread_in.title,
         companion_id=thread_in.companion_id,
-        user_id=current_user.id
+        user_id=current_user.id,
+        session_mode=thread_in.session_mode
     )
     db.add(new_thread)
     await db.commit()
@@ -110,8 +111,9 @@ async def send_message(
     
     emotion_snap, agent_intent = await asyncio.gather(emotion_task, intent_task)
     pe = emotion_snap.get("primary_emotion", "neutral")
-    emotion_modifier = emotion_service.get_adaptive_prompt_modifier(pe)
-    
+    sm = thread.session_mode or "casual"
+    combined_modifier = agent_service.route_session_mode(sm, emotion_snap)
+
     # Log user message (if NOT in private mode)
     user_msg = None
     if not private_mode:
@@ -122,7 +124,7 @@ async def send_message(
         )
         db.add(user_msg)
         await db.flush() # Populate ID
-
+ 
         # Log emotional snapshot
         try:
             await emotion_service.record_emotion(
@@ -133,7 +135,7 @@ async def send_message(
             )
         except Exception as e:
             print(f"Failed to record emotional snapshot: {e}")
-
+ 
         # Trigger background memory extraction
         if consent_memory:
             background_tasks.add_task(
@@ -142,7 +144,7 @@ async def send_message(
                 msg_in.content,
                 consent_memory
             )
-
+ 
     # Determine response content
     if agent_intent:
         # Execute agent workflow directly
@@ -194,9 +196,10 @@ async def send_message(
             temperature=current_user.temperature,
             tone=user_tone,
             rag_context=rag_context,
-            emotion_modifier=emotion_modifier,
+            emotion_modifier=combined_modifier,
             research_context=research_context,
-            primary_emotion=pe
+            primary_emotion=pe,
+            tone_analysis={**emotion_snap, "session_mode": sm}
         )
 
     # Log AI message (if NOT in private mode)
@@ -271,6 +274,7 @@ async def bulk_sync(
     db: AsyncSession = Depends(get_db)
 ):
     import datetime
+    import asyncio
     from app.models.memory import Memory
     from app.services.memory_service import memory_service
 
@@ -287,6 +291,7 @@ async def bulk_sync(
     processed_count = 0
 
     for mutation in mutations:
+        await asyncio.sleep(1)
         m_type = mutation.get("type")
         m_payload = mutation.get("payload", {})
         m_timestamp_str = mutation.get("timestamp")
@@ -300,6 +305,7 @@ async def bulk_sync(
             mock_id = m_payload.get("id")
             title = m_payload.get("title", "New Chat")
             companion_id = m_payload.get("companionId", "aria")
+            session_mode = m_payload.get("sessionMode") or m_payload.get("session_mode") or "casual"
             
             stmt = select(ChatThread).where(
                 ChatThread.user_id == current_user.id,
@@ -315,6 +321,7 @@ async def bulk_sync(
                     title=title,
                     companion_id=companion_id,
                     user_id=current_user.id,
+                    session_mode=session_mode,
                     created_at=m_timestamp,
                     updated_at=m_timestamp
                 )

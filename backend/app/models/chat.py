@@ -14,6 +14,7 @@ class ChatThread(Base):
     title = Column(String, index=True, nullable=False)
     companion_id = Column(String, default="aria", nullable=False)
     user_id = Column(BigInteger().with_variant(Integer, "sqlite"), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    session_mode = Column(String, default="casual", nullable=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())

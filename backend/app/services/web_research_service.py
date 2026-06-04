@@ -101,160 +101,30 @@ class WebResearchService:
             print(f"DuckDuckGo fallback scraping failed: {e}")
         return []
 
-    # Re-implemented actual API search logic for SerpAPI, Google Search, and News API
+    # Redirect legacy search methods to the new library-based search to prevent API key dependency failures
     @staticmethod
     async def perform_serp_search(query: str, api_key: str) -> List[Dict[str, Any]]:
-        """
-        Runs a search on SerpAPI using the configured key.
-        """
-        url = "https://serpapi.com/search.json"
-        params = {
-            "q": query,
-            "api_key": api_key,
-            "engine": "google"
-        }
-        try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                response = await client.get(url, params=params)
-                if response.status_code == 200:
-                    data = response.json()
-                    results = []
-                    for item in data.get("organic_results", [])[:3]:
-                        results.append({
-                            "title": item.get("title"),
-                            "snippet": item.get("snippet"),
-                            "link": item.get("link")
-                        })
-                    return results
-                else:
-                    print(f"SerpAPI query failed with status {response.status_code}: {response.text}")
-        except Exception as e:
-            print(f"SerpAPI call failed: {e}")
-        return []
+        return await WebResearchService.perform_ddg_search(query)
 
     @staticmethod
     async def perform_google_search(query: str, api_key: str, cse_id: str) -> List[Dict[str, Any]]:
-        """
-        Runs a search on Google Custom Search API.
-        """
-        url = "https://www.googleapis.com/customsearch/v1"
-        params = {
-            "key": api_key,
-            "cx": cse_id,
-            "q": query
-        }
-        try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                response = await client.get(url, params=params)
-                if response.status_code == 200:
-                    data = response.json()
-                    results = []
-                    for item in data.get("items", [])[:3]:
-                        results.append({
-                            "title": item.get("title"),
-                            "snippet": item.get("snippet"),
-                            "link": item.get("link")
-                        })
-                    return results
-                else:
-                    print(f"Google Custom Search API failed with status {response.status_code}: {response.text}")
-        except Exception as e:
-            print(f"Google Custom Search API call failed: {e}")
-        return []
+        return await WebResearchService.perform_ddg_search(query)
 
     @staticmethod
     async def perform_news_search(query: str, api_key: str) -> List[Dict[str, Any]]:
-        """
-        Runs a search on News API.
-        """
-        url = "https://newsapi.org/v2/everything"
-        params = {
-            "q": query,
-            "apiKey": api_key,
-            "pageSize": 3
-        }
-        try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                response = await client.get(url, params=params)
-                if response.status_code == 200:
-                    data = response.json()
-                    results = []
-                    for item in data.get("articles", [])[:3]:
-                        results.append({
-                            "title": item.get("title"),
-                            "snippet": item.get("description"),
-                            "link": item.get("url")
-                        })
-                    return results
-                else:
-                    print(f"News API query failed with status {response.status_code}: {response.text}")
-        except Exception as e:
-            print(f"News API call failed: {e}")
-        return []
+        return await WebResearchService.perform_ddg_search(query)
 
     @staticmethod
     async def perform_ddg_fallback_search(query: str) -> List[Dict[str, Any]]:
-        """
-        Fallback search method that tries DuckDuckGo library, then other available APIs, then DDG scraping.
-        """
-        results = await WebResearchService.perform_ddg_search(query)
-        if not results:
-            # Try Google Custom Search if configured
-            google_key = getattr(settings, "GOOGLE_API_KEY", None)
-            cse_id = getattr(settings, "GOOGLE_CSE_ID", None)
-            if google_key and google_key.strip() and cse_id and cse_id.strip():
-                results = await WebResearchService.perform_google_search(query, google_key, cse_id)
-        if not results:
-            # Try News API if configured
-            news_key = getattr(settings, "NEWS_API_KEY", None)
-            if news_key and news_key.strip():
-                results = await WebResearchService.perform_news_search(query, news_key)
-        if not results:
-            # Try DuckDuckGo scraping
-            results = await WebResearchService.perform_ddg_fallback_scraping(query)
-        return results
+        return await WebResearchService.perform_ddg_search(query)
 
     @staticmethod
     async def search_and_summarize(query: str) -> str:
         """
         Performs web search using DuckDuckGo search library as the primary provider,
-        and falls back to SerpAPI, Google Custom Search, News API, or DuckDuckGo scraping.
-        Generates a clean, concise summary of the findings using Groq API before sending it to the LLM.
+        and generates a clean, concise summary of the findings using Groq API before sending it to the LLM.
         """
-        results = []
-        
-        # 1. Try DuckDuckGo search (library, which internally tries fallback scraping on exception)
-        try:
-            results = await WebResearchService.perform_ddg_search(query, max_results=3)
-        except Exception as e:
-            print(f"DuckDuckGo search attempt failed with exception: {e}")
-            
-        # 2. If DDG results are empty, try SerpAPI
-        if not results:
-            serp_key = getattr(settings, "SERPAPI_API_KEY", None)
-            if serp_key and serp_key.strip():
-                print("DuckDuckGo failed/empty; trying SerpAPI...")
-                results = await WebResearchService.perform_serp_search(query, serp_key)
-                
-        # 3. If SerpAPI results are empty, try Google Custom Search
-        if not results:
-            google_key = getattr(settings, "GOOGLE_API_KEY", None)
-            cse_id = getattr(settings, "GOOGLE_CSE_ID", None)
-            if google_key and google_key.strip() and cse_id and cse_id.strip():
-                print("DuckDuckGo/SerpAPI failed/empty; trying Google Custom Search...")
-                results = await WebResearchService.perform_google_search(query, google_key, cse_id)
-
-        # 4. If Google Search results are empty and it's a news-like query, try News API
-        if not results:
-            news_key = getattr(settings, "NEWS_API_KEY", None)
-            if news_key and news_key.strip() and any(term in query.lower() for term in ["news", "latest", "headline"]):
-                print("DuckDuckGo/SerpAPI/Google failed/empty; trying News API...")
-                results = await WebResearchService.perform_news_search(query, news_key)
-                
-        # 5. If still empty, try DuckDuckGo fallback scraping
-        if not results:
-            results = await WebResearchService.perform_ddg_fallback_scraping(query)
-
+        results = await WebResearchService.perform_ddg_search(query, max_results=3)
         if not results:
             return ""
 

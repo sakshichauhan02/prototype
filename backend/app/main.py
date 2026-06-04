@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine, Base
+from sqlalchemy import text
 from app import models
 from app.api import auth, chat, memory, profile, emotion, research, workflow, tasks
 
@@ -44,6 +45,23 @@ async def on_startup():
         async with engine.begin() as conn:
             # Create all tables if they do not exist
             await conn.run_sync(Base.metadata.create_all)
+
+    # Run inline migration to add column session_mode to chat_threads if it doesn't exist yet
+    async with engine.begin() as conn:
+        try:
+            if settings.DATABASE_URL.startswith("postgresql"):
+                await conn.execute(text(
+                    "ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS session_mode VARCHAR NOT NULL DEFAULT 'casual'"
+                ))
+            else:
+                result = await conn.execute(text("PRAGMA table_info(chat_threads)"))
+                columns = [row[1] for row in result.fetchall()]
+                if "session_mode" not in columns:
+                    await conn.execute(text(
+                        "ALTER TABLE chat_threads ADD COLUMN session_mode VARCHAR NOT NULL DEFAULT 'casual'"
+                    ))
+        except Exception as migration_error:
+            print(f"Database inline migration warning: {migration_error}")
 
 @app.get("/")
 def read_root():

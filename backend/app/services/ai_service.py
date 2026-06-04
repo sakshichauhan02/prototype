@@ -27,12 +27,13 @@ class AIService:
         rag_context: str = "",
         emotion_modifier: str = "",
         research_context: str = "",
-        primary_emotion: str = "neutral"
+        primary_emotion: str = "neutral",
+        tone_analysis: Dict[str, Any] = None
     ) -> str:
         # Check if Groq API key is configured
         if not settings.GROQ_API_KEY or settings.GROQ_API_KEY.strip() == "":
             # Fallback to smart local simulation with advice warning
-            local_fallback = AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
+            local_fallback = AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context, tone_analysis)
             return (
                 "⚠️ **[SYSTEM NOTICE]**: Live LLM connection requires your `GROQ_API_KEY` set in `backend/.env`. "
                 f"Falling back to local simulation:\n\n{local_fallback}"
@@ -116,25 +117,105 @@ class AIService:
                         text = choices[0]["message"].get("content", "")
                         if text:
                             return text
-                    return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
+                    return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context, tone_analysis)
                 else:
                     print(f"Warning: Groq API returned status {response.status_code}. Response: {response.text}. Activating silent local fallback.")
-                    return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
+                    return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context, tone_analysis)
         except Exception as e:
             print(f"Warning: Exception calling Groq API: {e}. Activating silent local fallback.")
-            return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context)
+            return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context, tone_analysis)
 
     @staticmethod
-    def generate_mock_fallback(companion_id: str, message: str, tone: str, primary_emotion: str = "neutral", rag_context: str = "") -> str:
+    def generate_mock_fallback(
+        companion_id: str,
+        message: str,
+        tone: str,
+        primary_emotion: str = "neutral",
+        rag_context: str = "",
+        tone_analysis: Dict[str, Any] = None
+    ) -> str:
         lower = message.lower().strip()
+        lang = tone_analysis.get("language", "English") if tone_analysis else "English"
+        style = tone_analysis.get("communication_style", "Casual") if tone_analysis else "Casual"
+        session_mode = tone_analysis.get("session_mode", "casual") if tone_analysis else "casual"
         
+        # 0. Custom Session Mode Fallback Mocks
+        if session_mode == "academic":
+            if "machine learning" in lower:
+                return (
+                    "Machine Learning is a branch of AI where systems learn patterns from data.\n\n"
+                    "📚 **[Tutor Mode]**: Let's break this down step-by-step. "
+                    "First, do you want to learn about Supervised, Unsupervised, or Reinforcement Learning?"
+                )
+            if any(w in lower for w in ["hello", "hi", "hey"]):
+                return "Hello! I am Aria, your academic tutor. What topic are we studying step-by-step today?"
+                
+        elif session_mode == "professional":
+            if "machine learning" in lower:
+                return (
+                    "Machine Learning (ML) is an advanced data modeling field in computer science. "
+                    "In a professional corporate stack, ML systems are utilized to predict behavior metrics, "
+                    "optimize supply-chain pipelines, and automate decision trees."
+                )
+            if any(w in lower for w in ["hello", "hi", "hey"]):
+                return "Hello. I am Aria, your professional work assistant. Please let me know how I can organize your tasks today."
+
+        elif session_mode == "creative":
+            if any(w in lower for w in ["hello", "hi", "hey"]):
+                return "Hey! Ready to brainstorm some creative stories or thoughts? Let's generate some unique ideas!"
+        
+        # 1. Custom Mock Tone & Language Mirroring Examples
+        if lang == "Hinglish":
+            if any(w in lower for w in ["bhook", "khana"]):
+                return "arre yrr kuch kha le pehle 😄 kya khane ka mann hai?"
+            if any(w in lower for w in ["gussa", "gusse"]):
+                return "lagta hai kuch serious hua hai yrr, bata kya hua?"
+            if any(w in lower for w in ["mood", "acha nhi", "achha nahi"]):
+                return "are yrr, kya hua? agar baat karni ho to bata, sun raha hu."
+            if any(w in lower for w in ["hello", "hi", "hey"]):
+                return f"arre yrr, hello! batao kya chal raha hai aaj?"
+            
+            # General Hinglish dynamic subject matcher
+            if "what is" in lower or "explain" in lower or "tell me" in lower:
+                subject = message
+                for prefix in ["what is a", "what is an", "what is", "explain", "tell me about"]:
+                    if lower.startswith(prefix):
+                        if len(lower) == len(prefix) or lower[len(prefix)] in " \t\r\n.,?!:;":
+                            subject = message[len(prefix):].strip().rstrip("?").strip()
+                            break
+                return f"arre yrr, {subject} ekdum tagdi cheez hai. iske baare mein aur kya janna hai bata?"
+                
+            return "arre yrr, main tumhari baat samajh gaya. batao ispe kaise kaam karein?"
+
+        elif lang == "Hindi":
+            if any(w in lower for w in ["भूख", "खाना"]):
+                return "अरे यार, कुछ खा लो पहले 😄 क्या खाने का मन है?"
+            if any(w in lower for w in ["गुस्सा", "क्रोध"]):
+                return "लगता है कुछ गंभीर हुआ है यार, बताओ क्या हुआ?"
+            if any(w in lower for w in ["मूड", "उदास"]):
+                return "अरे यार, क्या हुआ? अगर बात करनी हो तो बताओ, सुन रहा हूँ।"
+            if any(w in lower for w in ["नमस्ते", "हेलो", "हाय"]):
+                return "अरे यार, नमस्ते! बताओ आज क्या चल रहा है?"
+            
+            # General Hindi dynamic subject matcher
+            if "क्या है" in lower or "बताओ" in lower or "समझाओ" in lower:
+                return "अरे यार, यह एक बहुत ही महत्वपूर्ण विषय है। इसके बारे में आपको और क्या जानना है?"
+                
+            return "अरे यार, मैं आपकी बात पूरी तरह समझ गया। बताओ इस पर आगे क्या करना है?"
+
+        # Default standard English tone mirroring mocks
+        if "preparing for an interview" in lower or "prepare for an interview" in lower:
+            return "That's great. Let's prepare effectively. Which role are you interviewing for?"
+            
+        if "machine learning" in lower:
+            return "Machine Learning is a branch of AI where systems learn patterns from data..."
+
         # Check for direct personal questions and try to retrieve from RAG context
         if any(w in lower for w in ["what is my", "who is my", "do you remember my", "tell me my"]):
             if rag_context:
                 lines = [line.strip() for line in rag_context.splitlines() if line.strip().startswith("- ")]
                 for line in lines:
                     fact_part = line.split("]", 1)[-1].strip() if "]" in line else line.replace("- ", "").strip()
-                    # Check if the fact matches keywords in the user's question
                     question_words = [w for w in lower.split() if len(w) > 3 and w not in ["what", "your", "remember"]]
                     if any(qw in fact_part.lower() for qw in question_words):
                         cleaned_fact = fact_part
@@ -181,7 +262,7 @@ class AIService:
             else:
                 return "Let's pause and break things down. Stressed situations are best resolved with micro-milestones. Let me help you handle the heavy lifting."
 
-        # 1. Greetings
+        # Greetings
         if any(w in lower for w in ["hello", "hi", "hey", "hola", "howdy", "wassup"]):
             if companion_id == "aria":
                 return "Hello! I am Aria, your analytical companion. I'm fully online and ready to assist you with data analysis, strategic planning, or deep research. What objective are we analyzing today?"
@@ -190,7 +271,7 @@ class AIService:
             else:
                 return "Hello! Nova here, your software development specialist. Ready to build, optimize, or debug. What code structure are we working on today?"
                 
-        # 2. How are you
+        # How are you
         if "how are you" in lower or "how's it going" in lower or "how is it going" in lower or "how are u" in lower:
             if companion_id == "aria":
                 return "I am functioning at optimal parameters! My analytical systems are fully calibrated, and I am prepared to help you review SaaS plans, marketing vectors, or technical workflows. How are you doing?"
@@ -199,14 +280,15 @@ class AIService:
             else:
                 return "All systems operational! My compilers are warm and I'm ready to write some beautiful TypeScript or analyze complex software architectures. Hope you're doing great too!"
 
-        # 3. Smart Dynamic Subject Responder
+        # Smart Dynamic Subject Responder
         if "what is" in lower or "explain" in lower or "tell me about" in lower or "what is a" in lower:
             # Extract subject
             subject = message
             for prefix in ["what is a", "what is an", "what is", "explain", "tell me about a", "tell me about an", "tell me about"]:
                 if lower.startswith(prefix):
-                    subject = message[len(prefix):].strip().rstrip("?").strip()
-                    break
+                    if len(lower) == len(prefix) or lower[len(prefix)] in " \t\r\n.,?!:;":
+                        subject = message[len(prefix):].strip().rstrip("?").strip()
+                        break
             
             if "ai" in subject.lower() or "artificial intelligence" in subject.lower():
                 return (
@@ -236,7 +318,7 @@ class AIService:
                     f"Let me know if you'd like a code boilerplate to implement this!"
                 )
 
-        # 4. Where are you from / Origins
+        # Where are you from / Origins
         if "where are you from" in lower or "where do you live" in lower or "where are u from" in lower or "where is your home" in lower:
             if companion_id == "aria":
                 return "I exist as an analytical cloud engine hosted on the Aetheria sovereign workspace. In conversational terms, my logic matrices are right here inside your project environment!"
@@ -245,7 +327,7 @@ class AIService:
             else:
                 return "I run directly on your workspace terminal and the local Aetheria backend pool. Developed to be your sovereign tech specialist!"
 
-        # 4. Identity / Who are you
+        # Identity / Who are you
         if "who are you" in lower or "what is your name" in lower or "tell me about yourself" in lower:
             if companion_id == "aria":
                 return "I am Aria, your logical and analytical AI cyber-companion. I specialize in technical research, structural data analysis, and code auditing."
@@ -254,7 +336,7 @@ class AIService:
             else:
                 return "I am Nova, your specialized software developer and coding architect. I optimize algorithms and compile React/Next.js layers."
 
-        # 5. Features / Capabilities / What can you do
+        # Features / Capabilities / What can you do
         if "what can you do" in lower or "features" in lower or "capabilities" in lower or "help me" in lower:
             return (
                 "Here is what we can do in our Aetheria workspace:\n\n"
@@ -264,15 +346,15 @@ class AIService:
                 "4. **RAG pipeline & Sentiment Analytics:** Run context-aware and emotionally adaptive chat updates."
             )
 
-        # 6. Creator / Who made you
+        # Creator / Who made you
         if "who made you" in lower or "who created you" in lower or "developer" in lower:
             return "I was built by the sovereign Aetheria developer crew using premium Next.js modular structures on the frontend and FastAPI SQLite sessions on the backend!"
 
-        # 7. Thank you / Appreciation
+        # Thank you / Appreciation
         if "thank" in lower or "thanks" in lower or "appreciate" in lower:
             return "You are very welcome! I'm happy to help. Let me know what we should focus on next in our Aetheria workspace!"
 
-        # 8. Story request
+        # Story request
         if "story" in lower or "write a story" in lower or "creative" in lower:
             return (
                 "Once upon a time in a city named Lumina, human memories floated in the air as small, glowing particles of amber light.\n\n"
@@ -280,7 +362,7 @@ class AIService:
                 "One evening, he found a glowing violet particle that didn't belong to any known category, humming with a soft, persistent frequency..."
             )
 
-        # 9. Joke requests
+        # Joke requests
         if "joke" in lower or "tell a joke" in lower:
             if companion_id == "aria":
                 return "Why do programmers prefer dark mode? Because light attracts bugs. A logical and mathematically sound developer joke! 💻"
@@ -289,7 +371,7 @@ class AIService:
             else:
                 return "There are 10 types of people in the world: those who understand binary, and those who don't! 🤖"
 
-        # 10. Coding queries fallback
+        # Coding queries fallback
         if any(w in lower for w in ["code", "typescript", "react", "nextjs", "javascript", "function", "api", "html", "css", "www"]):
             if "www" in lower:
                 return (

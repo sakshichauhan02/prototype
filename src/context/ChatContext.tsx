@@ -26,6 +26,7 @@ export interface ChatThread {
   companionId: string;
   messages: Message[];
   updatedAt: string;
+  sessionMode?: "casual" | "academic" | "professional" | "creative";
 }
 
 export interface Memory {
@@ -44,7 +45,7 @@ interface ChatContextType {
   setActiveThreadId: (id: string) => void;
   sendMessage: (content: string) => Promise<void>;
   isTyping: boolean;
-  createNewThread: (companionId: string, initialTitle?: string) => Promise<string>;
+  createNewThread: (companionId: string, initialTitle?: string, sessionMode?: "casual" | "academic" | "professional" | "creative") => Promise<string>;
   deleteThread: (threadId: string) => Promise<void>;
   renameThread: (threadId: string, newTitle: string) => Promise<void>;
   memories: Memory[];
@@ -322,6 +323,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           id: String(t.id),
           title: t.title,
           companionId: t.companion_id,
+          sessionMode: t.session_mode,
           messages: (t.messages || []).map((m: any) => ({
             id: String(m.id),
             sender: m.sender,
@@ -350,6 +352,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               id: String(created.id),
               title: created.title,
               companionId: created.companion_id,
+              sessionMode: created.session_mode,
               messages: [],
               updatedAt: new Date(created.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
             };
@@ -462,7 +465,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem("user");
   };
 
-  const createNewThread = async (companionId: string, initialTitle?: string): Promise<string> => {
+  const createNewThread = async (
+    companionId: string, 
+    initialTitle?: string, 
+    sessionMode: "casual" | "academic" | "professional" | "creative" = "casual"
+  ): Promise<string> => {
     const companion = COMPANIONS.find((c) => c.id === companionId) || COMPANIONS[0];
     const defaultTitle = initialTitle || `New Chat with ${companion.name}`;
     
@@ -474,7 +481,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`
           },
-          body: JSON.stringify({ title: defaultTitle, companion_id: companionId })
+          body: JSON.stringify({ 
+            title: defaultTitle, 
+            companion_id: companionId,
+            session_mode: sessionMode
+          })
         });
         if (res.ok) {
           const data = await res.json();
@@ -493,12 +504,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       id: newId,
       title: defaultTitle,
       companionId,
+      sessionMode,
       messages: [],
       updatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     };
     setThreads((prev) => [newThread, ...prev]);
     setActiveThreadId(newId);
-    addPendingMutation("CREATE_THREAD", { id: newId, companionId, title: defaultTitle });
+    addPendingMutation("CREATE_THREAD", { id: newId, companionId, title: defaultTitle, sessionMode });
     return newId;
   };
 

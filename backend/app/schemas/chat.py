@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 class MessageBase(BaseModel):
     content: str = Field(..., min_length=1)
@@ -21,6 +21,7 @@ class MessageResponse(BaseModel):
 class ThreadBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=100)
     companion_id: str = "aria"
+    session_mode: Optional[Literal["casual", "academic", "professional", "creative"]] = "casual"
 
 class ThreadCreate(ThreadBase):
     pass

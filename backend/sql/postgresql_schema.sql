@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
     title VARCHAR NOT NULL,
     companion_id VARCHAR NOT NULL DEFAULT 'aria',
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_mode VARCHAR NOT NULL DEFAULT 'casual',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
