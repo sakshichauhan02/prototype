@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 import os
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
+from sqlalchemy import text, select
 from app.database import get_db
 from app.api.deps import get_current_user
 from app.models.user import User
