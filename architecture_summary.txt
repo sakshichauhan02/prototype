@@ -9,6 +9,10 @@ connect together and specifies all external APIs integrated into the system.
 ================================================================================
 1. EXTERNAL APIS USED
 ================================================================================
+* Gemini Generative Language API
+  - Endpoint: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  - Objective: Advanced intent classification, entity extraction, and structured JSON generation.
+  
 * Groq Chat Completions API
   - Endpoint: https://api.groq.com/openai/v1/chat/completions
   - Model: llama-3.1-8b-instant
@@ -17,14 +21,14 @@ connect together and specifies all external APIs integrated into the system.
 * Hugging Face Inference API
   - Primary Model: sentence-transformers/all-MiniLM-L6-v2 (384 dimensions)
   - Fallback Model: BAAI/bge-small-en-v1.5 (384 dimensions)
-  - Endpoint: https://api-inference.huggingface.co/models/...
   - Objective: Text feature extraction for RAG cognitive memory vectors.
   
 * DuckDuckGo Search API
   - Package: duckduckgo_search (resolves to the 'ddgs' package)
-  - Method: Sync text search text() wrapped in asyncio.to_thread() for async-safety.
-  - Fallback: Direct html.duckduckgo.com web scraper.
   - Objective: Free, credential-less search results mapping title, snippet, and link.
+
+* n8n / Make Webhooks Integration
+  - Objective: Asynchronous dispatch of automation payloads (emails, reminders, resume JSON metadata).
 
 ================================================================================
 2. COMPONENT MAP & CONNECTIONS
@@ -33,29 +37,33 @@ connect together and specifies all external APIs integrated into the system.
       +-------------------------------------------------------------+
       |                   Next.js Frontend Client                   |
       |                     (Vercel Hosting)                        |
-      +------------------------------+------------------------------+
-                                     |
-                         [Pushes Offline Queue / 
-                          Polls API Connection]
-                                     |
-                                     v
-      +-------------------------------------------------------------+
+      +-------+----------------------+-----------------------+------+
+              |                      |                       |
+      [Sidebar Workspace]    [ChatBubble UI]         [ChatContext.tsx]
+      (Pills, Emojis,        (Glassmorphic PDF       (Auth, Thread Sync &
+       active indicators)     Download Button)        changeThreadMode API)
+              |                      |                       |
+              v                      v                       v
+      +-------+----------------------+-----------------------+------+
       |                     FastAPI Backend API                     |
       |                     (Render Hosting)                        |
       +-------+------------------+-----------------------+----------+
               |                  |                       |
-              v                  v                       v
-      [chat.py API]     [web_research_service.py]   [memory_service.py]
-              |                  |                       |
-      (Runs background   (Performs DDGS search   (AES-256-GCM
-       memory task)       & calls Groq)           Encrypt / Decrypt)
+      [chat.py & deps.py]   [agent_service.py]      [workflow.py API]
+      (CORS middleware &     (Intent router &        (Serves local PDF via
+       JWT Auth session)      Resume pipeline)        FileResponse)
               |                  |                       |
               |                  v                       v
-              |             [Groq LLM]            [Qdrant DB]
-              |       (llama-3.1-8b-instant)    (384-dim Vectors)
-              |                                          ^
-              +------------- [Hugging Face API] ---------+
-                            (all-MiniLM-L6-v2)
+              |             [pdf_generator.py]     [n8n Webhook]
+              |             (ReportLab slate/cyan   (Optional cloud PDF)
+              |              design compiler)
+              |                  |
+              +------------------+-----------------------+
+                                 |
+                                 v
+                            [SQLite DB]
+                      (Persistent Schema &
+                       Startup migrations)
 
 ================================================================================
 3. DETAILED FILE IMPLEMENTATION DETAILS
@@ -68,95 +76,105 @@ File: src/context/ChatContext.tsx [Frontend Context]
   Manages client-side authentication, companions list, active chat threads,
   memories list, and reconnection/synchronization routines.
 * Logic Steps:
-  1. Offline State Capture: When network requests fail, sets state 'backendOffline = true'.
-  2. Mutation Caching: When offline, intercepts operations (CREATE_THREAD, SEND_MESSAGE,
-     ADD_MEMORY, etc.) and writes them to a localStorage array 'aetheria_pending_mutations'
-     attaching ISO timestamps.
-  3. Reconnection Poller: If backendOffline is true, starts a 5-second interval timer
+  1. Reconnection Poller: If backendOffline is true, starts a 5-second interval timer
      and registers a window "online" listener to ping the backend root.
-  4. Reconcile Sync: Once connection returns, sends the localStorage queue to
+  2. Reconcile Sync: Once connection returns, sends the localStorage queue to
      POST /api/v1/chat/sync, clears the local storage on success, and re-syncs all
      active data from the DB.
+  3. changeThreadMode: Takes threadId and sessionMode, makes a PUT request to
+     `/chat/threads/{threadId}` with the updated session mode, updating database records.
 
 --------------------------------------------------------------------------------
-File: backend/app/api/chat.py [Chat API Router]
+File: src/components/Sidebar.tsx [Dashboard Navigation Sidebar]
 --------------------------------------------------------------------------------
 * Objective:
-  Exposes the chat message endpoints and handles background cognitive operations.
+  Provides navigation links, list of active chat threads, and a visual Workspace Mode selector.
 * Logic Steps:
-  1. Route: POST /threads/{thread_id}/messages
-     - Saves the User message to SQLite.
-     - Detects emotion and user intent in parallel.
-     - Queues memory extraction in a FastAPI 'BackgroundTask' so the primary thread returns
-       an immediate response in under ~5s instead of waiting for LLM + Embeddings.
-     - Calls Groq API or loads agent workflows.
-  2. Route: POST /sync [Bulk Synchronization Endpoint]
-     - Receives list of queued mutations.
-     - Sorts mutations chronologically by client-side timestamps.
-     - Maintained 'mock_thread_id_map' to map local frontend mock IDs (e.g. mock-thread-xyz)
-       to actual database integers, linking messages correctly.
-     - Compares timestamps to discard stale renames/updates.
-     - Deduplicates messages and memories to prevent write duplication.
+  1. Mount Synchronization: Reads the fallback mode from localStorage key
+     `aetheria_default_session_mode` on mount.
+  2. Active Mode Binding: Sets active mode selection to `activeThread.sessionMode` (if it
+     exists), otherwise falls back to `localDefaultMode`.
+  3. Mode Selection Change: Clicking a workspace mode (Personal, Professional, Academic,
+     Researcher, Playground) writes the selection to localStorage and, if a thread is active,
+     calls the `changeThreadMode` API to sync changes with the database.
+  4. Parameter Forwarding: Creating a new thread via `handleCreateNewChat` automatically
+     forwards the active workspace mode as the third parameter to `createNewThread()`.
+  5. Active Tags: Renders a sub-label (e.g. "PERSONAL MODE") under each thread title.
 
 --------------------------------------------------------------------------------
-File: backend/app/services/memory_service.py [Cognitive Vault Engine]
+File: src/components/ChatBubble.tsx [Message bubble renderer]
 --------------------------------------------------------------------------------
 * Objective:
-  Extracts long-term user facts, encrypts them at rest in SQL, and manages vector indexes.
+  Displays user and AI messages and renders rich elements like code boxes and action buttons.
 * Logic Steps:
-  1. Encryption: encrypt_fact(text) generates a random 12-byte secure initialization
-     vector (IV) using os.urandom(12). Cryptography module performs AES-256-GCM symmetric
-     encryption. Payload is concatenated as 'IV + Tag + Ciphertext', base64 encoded,
-     and stored with prefix 'aeth_aes:'.
-  2. Decryption: decrypt_fact(text) checks the prefix:
-     - 'aeth_aes:': performs AES-256-GCM decryption, verifying GCM authentication tag.
-     - 'aeth_enc:': legacy fallback that performs Base64 decoding (ensures backward compatibility).
-  3. Vectorization: Extracts facts using Gemini, hashes/syncs vectors to Qdrant.
+  1. URL Scrubbing: Uses a regex check matching `(?:pdf_url|download_url|resume_url)\s*:\s*(https?://[^\s]+)`.
+     If a match is found, it extracts the URL, removes the matched text line from the visible message
+     to avoid showing raw links, and stores the URL in a React variable.
+  2. Glassmorphic Rendering: If the URL is found, appends a responsive bouncing download button
+     labeled "Download Your Resume", linking to the dynamic PDF document.
 
 --------------------------------------------------------------------------------
-File: backend/app/services/web_research_service.py [Search Agent Service]
+File: backend/app/services/pdf_generator.py [Dynamic PDF Compiler]
 --------------------------------------------------------------------------------
 * Objective:
-  Runs live search queries and synthesizes findings into a concise context summary.
+  Generates a high-quality, professionally formatted resume PDF on the local server using ReportLab.
 * Logic Steps:
-  1. perform_ddg_search: Imports 'DDGS' dynamically trying 'ddgs' first (v9+) and
-     'duckduckgo_search' (v8) as fallback. Runs the search in asyncio.to_thread() to prevent
-     blocking the event loop.
-  2. perform_ddg_fallback_scraping: If the library is rate-capped or raises exceptions,
-     parses DuckDuckGo HTML using regex and urllib.
-  3. search_and_summarize: Fetches raw search results, compiles them as markdown sources, and
-     calls Groq API (llama-3.1-8b-instant) with a customized prompt instructing it to return
-     a factual summary of max 4 sentences.
+  1. Setup Document: Uses a SimpleDocTemplate with 0.5-inch margins for compact spatial formatting.
+  2. Branding: Applies a customized color palette using HexColors (Primary: Dark Slate #0F172A,
+     Secondary: Muted Blue #475569, Accent: Cyan #06B6D4 matching Aetheria theme).
+  3. Flowables Story:
+     - Header: Centers the Candidate Name in Helvetica-Bold (24pt) and contact info separated by bullets.
+     - Section Headings: Appends uppercase section titles followed by a subtle cyan horizontal divider line.
+     - Bullet Parsing: Splits section content by newlines, checks for bullet qualifiers ('-' or '*'),
+       and renders nested bullet paragraphs with proper indentation.
+  4. Compilation: Invokes `doc.build(story)` to compile the flowables into a PDF file on disk.
 
 --------------------------------------------------------------------------------
-File: backend/app/services/qdrant_service.py [Vector Database Service]
+File: backend/app/api/workflow.py [Workflow API Router]
 --------------------------------------------------------------------------------
 * Objective:
-  Manages semantic embedding creation and queries in Qdrant.
+  Exposes workflow execution and dynamic file serving endpoints.
 * Logic Steps:
-  1. Schema Validation: Checks Qdrant collection on start. If collection dimension is not
-     exactly 384, deletes and recreates it.
-  2. Feature Extraction: Calls Hugging Face inference API for sentence-transformers/all-MiniLM-L6-v2.
-     On error, falls back to BAAI/bge-small-en-v1.5. On complete network failure, uses a deterministic
-     hash-based generator yielding a 384-dimensional mock vector.
+  1. Static Resumes Dir: Initializes `static_resumes` folder in the backend workspace.
+  2. FileResponse Route: Exposes a GET route `/resume/download/{filename}`.
+     It verifies that the filename exists in the static folder, reads it, and returns the binary
+     stream as a FileResponse with `media_type="application/pdf"`.
 
 --------------------------------------------------------------------------------
-File: backend/app/services/ai_service.py [LLM Service]
+File: backend/app/services/agent_service.py [Agent Intent Router & Pipeline Manager]
 --------------------------------------------------------------------------------
 * Objective:
-  Builds dialog context and returns chat responses.
+  Routes intent execution, performs validations, and executes professional workflows.
 * Logic Steps:
-  1. API Mapping: Maps system messages and thread histories into standard chat messages.
-  2. Groq Completion: Sends the payload to api.groq.com. Fallbacks silently to mock local companion
-     heuristics on connection exceptions or 401/429 status codes.
+  1. Fallback Intent Checks: If Gemini is offline, runs regex checks matching resume keywords or counting
+     spaced label tags (e.g. `Name :`).
+  2. Segment Offset Parser (Attempt 3): If user pastes a raw copy of their CV, segments sections dynamically
+     by sorting header index coordinates, allowing extraction from newline-stripped formats.
+  3. validation check: Verifies that Name, Contact, Education, Experience, and Skills are present. If
+     any is missing, compiles already-known details and prompts the user with a pre-filled template.
+  4. Local PDF compiler fallback: Once details are complete, triggers `generate_resume_pdf` to create the
+     actual resume PDF file, naming it `resume_{uuid.uuid4().hex[:8]}.pdf`. Returns the local server URL
+     `http://localhost:8000/api/v1/workflow/resume/download/{filename}` as the download link.
+  5. Webhook dispatch: If `N8N_WEBHOOK_URL` is set, posts the JSON payload to n8n. If the webhook returns
+     a URL, uses it; otherwise falls back to the local PDF.
+
+--------------------------------------------------------------------------------
+File: backend/app/services/emotion_service.py [Sentiment Analytics]
+--------------------------------------------------------------------------------
+* Objective:
+  Tracks sentiment intensity and routes buddy mode hinges.
+* Logic Steps:
+  1. Hinglish/Slang Analysis: Analyzes the message text for Hindi/Hinglish slang or venting terms.
+  2. Bhai Mode Adapter: If personal mode is active and slang is detected, instructs the LLM
+     to drop formal preambles and talk like a close friend, inserting Hinglish slang terms naturally.
 
 ================================================================================
 4. VERIFICATION SCRIPTS (Located in backend/scratch/)
 ================================================================================
-* test_search_integration.py: Validates live DuckDuckGo structured search queries and Groq summaries.
-* test_background_memory.py: Verifies background task execution latency (<5s) and storage.
-* test_encryption_upgrade.py: Tests AES-256-GCM encryption/decryption, legacy compatibility,
-  and bit-flip authentication tag tempering failure checks.
-* test_sync_engine.py: Tests API synchronization endpoint, ID translation, and conflict logic.
-* test_live_render.py: Runs production validation checks directly on the Render live URL.
+* verify_pasted_resume.py: Tests raw copy-pasted CV text parsing and PDF generation.
+* verify_resume_api.py: Verifies template label matching containing extra colon spaces.
+* test_pdf_gen.py: Direct ReportLab compile verification.
+* test_session_mode.py: Verifies database migrations and default personal mode parameters.
+* test_dynamic_mode_routing.py: Tests instructions for Academic, Researcher, and Professional modes.
+* check_render_threads.py: Diagnostics verifying Render backend database and API integrity.
 ================================================================================
