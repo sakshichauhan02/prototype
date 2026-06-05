@@ -88,59 +88,7 @@ def download_resume(filename: str):
         filename=filename
     )
 
-@router.get("/diag/db")
-async def diag_db(db: AsyncSession = Depends(get_db)):
-    """
-    Temporary route to inspect active threads in DB and debug Pydantic errors.
-    """
-    from app.models.chat import ChatThread
-    from app.schemas.chat import ThreadResponse
-    from sqlalchemy.orm import selectinload
-    
-    try:
-        stmt = select(ChatThread).options(selectinload(ChatThread.messages))
-        result = await db.execute(stmt)
-        threads = result.scalars().all()
-        
-        serialized = []
-        for t in threads:
-            try:
-                # Try validation
-                pydantic_thread = ThreadResponse.model_validate(t)
-                serialized.append({
-                    "id": pydantic_thread.id,
-                    "title": pydantic_thread.title,
-                    "session_mode": pydantic_thread.session_mode,
-                    "validation": "success"
-                })
-            except Exception as val_err:
-                import traceback
-                # Return validation details to diagnose the 500 error
-                return {
-                    "error": "Pydantic Validation Error",
-                    "exception": str(val_err),
-                    "traceback": traceback.format_exc(),
-                    "thread_db_values": {
-                        "id": t.id,
-                        "title": t.title,
-                        "companion_id": t.companion_id,
-                        "session_mode": t.session_mode,
-                        "created_at": str(t.created_at),
-                        "updated_at": str(t.updated_at),
-                        "messages": [
-                            {
-                                "id": m.id,
-                                "sender": m.sender,
-                                "content": m.content,
-                                "timestamp": str(m.timestamp)
-                            } for m in t.messages
-                        ]
-                    }
-                }
-        return {"threads": serialized, "count": len(threads)}
-    except Exception as e:
-        import traceback
-        return {"error": str(e), "traceback": traceback.format_exc()}
+
 
 
 
