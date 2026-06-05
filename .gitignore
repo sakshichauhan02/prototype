@@ -49,3 +49,5 @@ __pycache__/
 *.db
 qdrant_data/
 backend/qdrant_data/
+backend/static_resumes/
+*.pdf

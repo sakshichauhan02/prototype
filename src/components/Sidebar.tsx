@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useChat } from "@/context/ChatContext";
 import { useTheme } from "@/context/ThemeContext";
@@ -16,6 +16,10 @@ import {
   FiX,
   FiCheck,
   FiCheckSquare,
+  FiBriefcase,
+  FiBookOpen,
+  FiSearch,
+  FiCompass,
 } from "react-icons/fi";
 import Link from "next/link";
 
@@ -31,11 +35,32 @@ export default function Sidebar() {
     deleteThread,
     renameThread,
     companions,
+    changeThreadMode,
   } = useChat();
 
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [localDefaultMode, setLocalDefaultMode] = useState<"personal" | "professional" | "academic" | "researcher" | "playground">("personal");
+
+  // Load default mode from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("aetheria_default_session_mode");
+    if (saved && ["personal", "professional", "academic", "researcher", "playground"].includes(saved)) {
+      setLocalDefaultMode(saved as any);
+    }
+  }, []);
+
+  const activeThread = threads.find((t) => t.id === activeThreadId);
+  const currentMode = activeThread?.sessionMode || localDefaultMode;
+
+  const handleModeChange = async (modeId: "personal" | "professional" | "academic" | "researcher" | "playground") => {
+    localStorage.setItem("aetheria_default_session_mode", modeId);
+    setLocalDefaultMode(modeId);
+    if (activeThread) {
+      await changeThreadMode(activeThread.id, modeId);
+    }
+  };
 
   const mainLinks = [
     { name: "AI Companion Chat", href: "/dashboard", icon: FiMessageSquare },
@@ -43,6 +68,14 @@ export default function Sidebar() {
     { name: "Tasks Dashboard", href: "/dashboard/tasks", icon: FiCheckSquare },
     { name: "Settings Portal", href: "/dashboard/settings", icon: FiSettings },
   ];
+
+  const workspaceModes = [
+    { id: "personal", name: "Personal", icon: FiMessageSquare, desc: "Bhai mode & private chat" },
+    { id: "professional", name: "Professional", icon: FiBriefcase, desc: "Automation & resume pipeline" },
+    { id: "academic", name: "Academic", icon: FiBookOpen, desc: "Step-by-step tutoring" },
+    { id: "researcher", name: "Researcher", icon: FiSearch, desc: "Web search & citations" },
+    { id: "playground", name: "Playground", icon: FiCompass, desc: "Custom temp & engines" },
+  ] as const;
 
   const handleStartRename = (id: string, currentTitle: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -63,8 +96,8 @@ export default function Sidebar() {
   };
 
   const handleCreateNewChat = () => {
-    // Spawn chat default companion is 'aria'
-    createNewThread("aria");
+    // Spawn chat with active mode pre-selected
+    createNewThread("aria", undefined, currentMode);
     router.push("/dashboard");
   };
 
@@ -116,7 +149,7 @@ export default function Sidebar() {
           </div>
 
           {/* Navigation Links */}
-          <div className="px-4 py-4 space-y-1">
+          <div className="px-4 py-3 space-y-1">
             {mainLinks.map((link) => {
               const Icon = link.icon;
               const isActive = pathname === link.href;
@@ -126,7 +159,7 @@ export default function Sidebar() {
                   href={link.href}
                   onClick={() => setIsOpen(false)}
                   className={`
-                    flex items-center gap-3 px-3 py-2.5 rounded-xl text-[14px] font-medium transition-all
+                    flex items-center gap-3 px-3 py-2 rounded-xl text-[13.5px] font-medium transition-all
                     ${
                       isActive
                         ? "bg-indigo-500/10 dark:bg-cyan-500/10 text-indigo-600 dark:text-cyan-400 border border-indigo-500/20 dark:border-cyan-500/20"
@@ -141,10 +174,50 @@ export default function Sidebar() {
             })}
           </div>
 
+          {/* Workspace Mode Selector */}
+          <div className="px-4 py-2 border-t border-zinc-200/20 dark:border-zinc-800/40">
+            <span className="text-[10px] font-bold tracking-widest font-mono text-zinc-400 dark:text-zinc-500 uppercase px-2">
+              Workspace Mode
+            </span>
+            <div className="mt-2 space-y-1 bg-zinc-200/30 dark:bg-zinc-900/30 p-1 rounded-xl border border-zinc-200/40 dark:border-zinc-800/40">
+              {workspaceModes.map((mode) => {
+                const Icon = mode.icon;
+                const isActive = currentMode === mode.id;
+                return (
+                  <button
+                    key={mode.id}
+                    onClick={() => handleModeChange(mode.id)}
+                    className={`
+                      flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-left transition-all duration-300 border
+                      ${
+                        isActive
+                          ? "bg-white dark:bg-zinc-900 text-indigo-600 dark:text-cyan-400 border-zinc-200/80 dark:border-zinc-800/80 shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
+                          : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/40 dark:hover:bg-zinc-900/40 border-transparent"
+                      }
+                    `}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={`p-1 rounded-md transition-colors ${isActive ? "bg-indigo-500/10 dark:bg-cyan-500/10" : "bg-transparent"}`}>
+                        <Icon className={`w-3.5 h-3.5 ${isActive ? "text-indigo-500 dark:text-cyan-400" : "text-zinc-400 dark:text-zinc-500"}`} />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[12.5px] font-medium block leading-none">{mode.name}</span>
+                        <span className="text-[9px] text-zinc-400 dark:text-zinc-500 block truncate mt-0.5">{mode.desc}</span>
+                      </div>
+                    </div>
+                    {isActive && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-cyan-400 mr-1" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Chat Threads Section */}
-          <div className="flex-1 flex flex-col min-h-0 px-4 mt-2">
+          <div className="flex-1 flex flex-col min-h-0 px-4 mt-2 border-t border-zinc-200/20 dark:border-zinc-800/40 pt-3">
             <div className="flex items-center justify-between px-3 mb-2">
-              <span className="text-[11px] font-bold tracking-widest font-mono text-zinc-400 dark:text-zinc-500 uppercase">
+              <span className="text-[10px] font-bold tracking-widest font-mono text-zinc-400 dark:text-zinc-500 uppercase">
                 Active Threads
               </span>
               <button
@@ -202,7 +275,14 @@ export default function Sidebar() {
                           }}
                         />
                       ) : (
-                        <span className="truncate font-medium">{thread.title}</span>
+                        <div className="flex flex-col min-w-0">
+                          <span className="truncate font-medium leading-tight">{thread.title}</span>
+                          {thread.sessionMode && (
+                            <span className="text-[9px] uppercase font-bold text-zinc-400 dark:text-zinc-500 mt-0.5 tracking-wider">
+                              {thread.sessionMode} Mode
+                            </span>
+                          )}
+                        </div>
                       )}
                     </div>
 
@@ -279,3 +359,4 @@ export default function Sidebar() {
     </>
   );
 }
+

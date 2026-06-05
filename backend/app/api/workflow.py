@@ -1,10 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from typing import List, Dict, Any
 from pydantic import BaseModel, Field
+import os
 from app.api.deps import get_current_user
 from app.models.user import User
 
 router = APIRouter()
+
+# Directory for generated PDF resumes
+RESUME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "static_resumes")
+os.makedirs(RESUME_DIR, exist_ok=True)
 
 class WorkflowRequest(BaseModel):
     pipeline_name: str = Field(..., example="System Refactor Pipeline")
@@ -64,3 +70,18 @@ async def execute_agent_workflow(
         steps=steps,
         status="success"
     )
+
+@router.get("/resume/download/{filename}")
+def download_resume(filename: str):
+    """
+    Serves the locally generated PDF resume.
+    """
+    file_path = os.path.join(RESUME_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Resume PDF file not found")
+    return FileResponse(
+        path=file_path,
+        media_type="application/pdf",
+        filename=filename
+    )
+

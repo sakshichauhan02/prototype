@@ -82,6 +82,61 @@ async def send_message(
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
 
+    # Handle Playground Mode commands directly
+    if thread.session_mode == "playground":
+        content_stripped = msg_in.content.strip().lower()
+        if content_stripped.startswith("/set ") or (content_stripped.startswith("/") and any(cmd in content_stripped for cmd in ["/temp", "/engine", "/tone"])):
+            updated_params = []
+            
+            import re
+            temp_match = re.search(r'(?:/set\s+)?(?:temp|temperature)\s+([0-9.]+)', content_stripped)
+            if temp_match:
+                try:
+                    val = float(temp_match.group(1))
+                    if 0.0 <= val <= 2.0:
+                        current_user.temperature = val
+                        updated_params.append(f"Temperature ➔ **{val}**")
+                except ValueError:
+                    pass
+            
+            engine_match = re.search(r'(?:/set\s+)?(?:engine)\s+(\S+)', content_stripped)
+            if engine_match:
+                val = engine_match.group(1).strip()
+                current_user.cognitive_engine = val
+                updated_params.append(f"Cognitive Engine ➔ **{val}**")
+                
+            tone_match = re.search(r'(?:/set\s+)?(?:tone)\s+(\S+)', content_stripped)
+            if tone_match:
+                val = tone_match.group(1).strip().capitalize()
+                current_user.tone = val
+                updated_params.append(f"Tone ➔ **{val}**")
+                
+            if updated_params:
+                await db.commit()
+                # Create user message
+                user_msg = ChatMessage(
+                    thread_id=thread.id,
+                    sender="user",
+                    content=msg_in.content
+                )
+                # Create AI confirmation message
+                ai_reply_content = (
+                    f"⚙️ **[Playground Controls Updated]**\n\n"
+                    f"Successfully tuned active cognitive engine variables:\n" + \
+                    "\n".join([f"- {param}" for param in updated_params]) + \
+                    "\n\n*All future responses in this thread will run with these parameters.*"
+                )
+                ai_msg = ChatMessage(
+                    thread_id=thread.id,
+                    sender="ai",
+                    content=ai_reply_content
+                )
+                db.add(user_msg)
+                db.add(ai_msg)
+                await db.commit()
+                await db.refresh(ai_msg)
+                return ai_msg
+
     # Query user preferences/settings for Private Mode and Consent-based Memory Saving
     private_mode = False
     consent_memory = True
@@ -101,6 +156,11 @@ async def send_message(
     except Exception as e:
         print(f"Failed to query privacy settings: {e}")
 
+    # Enforce private mode and bypass memory logging automatically when Personal Mode is active
+    if thread.session_mode == "personal":
+        private_mode = True
+        consent_memory = False
+
     # Run emotion analysis and intent detection in parallel to optimize latency
     import asyncio
     from app.services.emotion_service import emotion_service
@@ -111,7 +171,7 @@ async def send_message(
     
     emotion_snap, agent_intent = await asyncio.gather(emotion_task, intent_task)
     pe = emotion_snap.get("primary_emotion", "neutral")
-    sm = thread.session_mode or "casual"
+    sm = thread.session_mode or "personal"
     combined_modifier = agent_service.route_session_mode(sm, emotion_snap)
 
     # Log user message (if NOT in private mode)
@@ -162,12 +222,22 @@ async def send_message(
             db=db
         )
         
-        # Scan history for active research context
+        # Scan history for active research context or force real-time search in Researcher Mode
         research_context = ""
-        for m in reversed(thread.messages):
-            if m.sender == "ai" and "🔍 **[Research Agent Active]**" in m.content:
-                research_context = m.content
-                break
+        if sm == "researcher":
+            from app.services.web_research_service import web_research_service
+            is_greeting = any(w in msg_in.content.lower().strip() for w in ["hello", "hi", "hey", "hola", "howdy"]) and len(msg_in.content.strip()) < 10
+            if not is_greeting:
+                try:
+                    research_context = await web_research_service.search_and_summarize(msg_in.content)
+                except Exception as e:
+                    print(f"Warning: Researcher mode auto-search failed: {e}")
+        
+        if not research_context:
+            for m in reversed(thread.messages):
+                if m.sender == "ai" and "🔍 **[Research Agent Active]**" in m.content:
+                    research_context = m.content
+                    break
         
         # History formatting
         history = []
@@ -199,7 +269,12 @@ async def send_message(
             emotion_modifier=combined_modifier,
             research_context=research_context,
             primary_emotion=pe,
-            tone_analysis={**emotion_snap, "session_mode": sm}
+            tone_analysis={
+                **emotion_snap,
+                "session_mode": sm,
+                "cognitive_engine": current_user.cognitive_engine,
+                "temperature": current_user.temperature
+            }
         )
 
     # Log AI message (if NOT in private mode)
@@ -243,6 +318,7 @@ async def rename_thread(
         raise HTTPException(status_code=404, detail="Thread not found")
         
     thread.title = thread_in.title
+    thread.session_mode = thread_in.session_mode
     await db.commit()
     await db.refresh(thread)
     return thread
@@ -305,7 +381,7 @@ async def bulk_sync(
             mock_id = m_payload.get("id")
             title = m_payload.get("title", "New Chat")
             companion_id = m_payload.get("companionId", "aria")
-            session_mode = m_payload.get("sessionMode") or m_payload.get("session_mode") or "casual"
+            session_mode = m_payload.get("sessionMode") or m_payload.get("session_mode") or "personal"
             
             stmt = select(ChatThread).where(
                 ChatThread.user_id == current_user.id,

@@ -20,6 +20,7 @@ export default function ChatDashboard() {
     isTyping,
     createNewThread,
     backendOffline,
+    changeThreadMode,
   } = useChat();
 
   const [inputMsg, setInputMsg] = useState("");
@@ -77,6 +78,26 @@ export default function ChatDashboard() {
           </div>
 
           <div className="flex items-center gap-4">
+            {/* Quick Session Mode Selector in Navbar */}
+            {activeThread && (
+              <div className="flex items-center gap-1.5 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800/80">
+                <span className="text-[11px] font-mono font-bold text-zinc-400 dark:text-zinc-500 uppercase ml-2 select-none">Mode:</span>
+                <select
+                  value={activeThread.sessionMode || "personal"}
+                  onChange={(e) => {
+                    changeThreadMode(activeThread.id, e.target.value as any);
+                  }}
+                  className="h-8 px-2 rounded-lg text-[12px] font-bold bg-white dark:bg-zinc-800 border border-zinc-200/35 dark:border-zinc-700/30 text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
+                >
+                  <option value="personal">Personal</option>
+                  <option value="professional">Professional</option>
+                  <option value="academic">Academic</option>
+                  <option value="researcher">Researcher</option>
+                  <option value="playground">Playground</option>
+                </select>
+              </div>
+            )}
+
             {/* Quick Companion Selector in Navbar */}
             <div className="hidden lg:flex items-center gap-1.5 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800/80">
               {companions.map((comp) => {

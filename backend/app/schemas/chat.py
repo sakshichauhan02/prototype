@@ -21,7 +21,7 @@ class MessageResponse(BaseModel):
 class ThreadBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=100)
     companion_id: str = "aria"
-    session_mode: Optional[Literal["casual", "academic", "professional", "creative"]] = "casual"
+    session_mode: Optional[Literal["personal", "professional", "academic", "researcher", "playground"]] = "personal"
 
 class ThreadCreate(ThreadBase):
     pass

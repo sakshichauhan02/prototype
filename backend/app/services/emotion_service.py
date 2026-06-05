@@ -164,6 +164,7 @@ class EmotionService:
         if "communication_style" not in result:
             result["communication_style"] = EmotionService._detect_style_local(message, result.get("primary_emotion", "neutral"))
 
+        result["message"] = message
         return result
 
     @staticmethod
@@ -327,6 +328,24 @@ class EmotionService:
             instructions += "Speak with deep empathy, active validation, and absolute patience. Do not defend or argue."
         elif style == "Motivational":
             instructions += "Be encouraging, inspiring, action-oriented, and positive. Lift the user's spirit."
+
+        # Check if "Bhai" Mode should be active (Hinglish/local slang/expressive venting/friend-like interaction)
+        msg_lower = analysis.get("message", "").lower()
+        is_venting_or_slang = (
+            lang == "Hinglish" or 
+            lang == "Hindi" or
+            style in ["Casual", "Friendly", "Angry", "Sad", "Emotional"] or
+            any(w in msg_lower for w in ["bhai", "yaar", "yrr", "bro", "dude", "kya", "na", "ab", "toh", "mood", "bhook"])
+        )
+        
+        if is_venting_or_slang:
+            instructions += (
+                "\n- BHAI MODE / LOCAL BUDDY STYLE ACTIVE:\n"
+                "  * Drop all formal or corporate language, greetings, or polite preambles.\n"
+                "  * Respond like a real local buddy or friend (\"Bhai\" / \"bro\" / \"yaar\").\n"
+                "  * Keep your response extremely natural, colloquial, and warm. Use casual friend-like terms (e.g. 'bhai', 'yaar', 'chill', 'bro', 'koi na').\n"
+                "  * Avoid robotic AI phrasing (e.g. 'How can I assist you today?'). Speak like a real supportive human friend."
+            )
 
         # Add Safety Rules
         instructions += (

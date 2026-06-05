@@ -26,7 +26,7 @@ export interface ChatThread {
   companionId: string;
   messages: Message[];
   updatedAt: string;
-  sessionMode?: "casual" | "academic" | "professional" | "creative";
+  sessionMode?: "personal" | "professional" | "academic" | "researcher" | "playground";
 }
 
 export interface Memory {
@@ -45,9 +45,10 @@ interface ChatContextType {
   setActiveThreadId: (id: string) => void;
   sendMessage: (content: string) => Promise<void>;
   isTyping: boolean;
-  createNewThread: (companionId: string, initialTitle?: string, sessionMode?: "casual" | "academic" | "professional" | "creative") => Promise<string>;
+  createNewThread: (companionId: string, initialTitle?: string, sessionMode?: "personal" | "professional" | "academic" | "researcher" | "playground") => Promise<string>;
   deleteThread: (threadId: string) => Promise<void>;
   renameThread: (threadId: string, newTitle: string) => Promise<void>;
+  changeThreadMode: (threadId: string, sessionMode: "personal" | "professional" | "academic" | "researcher" | "playground") => Promise<void>;
   memories: Memory[];
   addMemory: (fact: string, category: Memory["category"]) => Promise<void>;
   deleteMemory: (id: string) => Promise<void>;
@@ -332,7 +333,18 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           })),
           updatedAt: new Date(t.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
         }));
-        setThreads(formatted);
+        setThreads((prevThreads) => {
+          return formatted.map((ft) => {
+            const existing = prevThreads.find((et) => et.id === ft.id);
+            if (ft.sessionMode === "personal" && existing && existing.messages.length > ft.messages.length) {
+              return {
+                ...ft,
+                messages: existing.messages
+              };
+            }
+            return ft;
+          });
+        });
         setBackendOffline(false);
         if (formatted.length > 0 && (!activeThreadId || activeThreadId.startsWith("mock-"))) {
           setActiveThreadId(formatted[0].id);
@@ -468,7 +480,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const createNewThread = async (
     companionId: string, 
     initialTitle?: string, 
-    sessionMode: "casual" | "academic" | "professional" | "creative" = "casual"
+    sessionMode: "personal" | "professional" | "academic" | "researcher" | "playground" = "personal"
   ): Promise<string> => {
     const companion = COMPANIONS.find((c) => c.id === companionId) || COMPANIONS[0];
     const defaultTitle = initialTitle || `New Chat with ${companion.name}`;
@@ -645,6 +657,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   };
 
   const renameThread = async (threadId: string, newTitle: string) => {
+    const thread = threads.find((t) => t.id === threadId);
+    const companionId = thread ? thread.companionId : "aria";
+    const sessionMode = thread ? thread.sessionMode : "personal";
+
     if (token && !backendOffline && !threadId.startsWith("mock-")) {
       try {
         const res = await fetch(`${API_BASE}/chat/threads/${threadId}`, {
@@ -653,7 +669,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`
           },
-          body: JSON.stringify({ title: newTitle })
+          body: JSON.stringify({ 
+            title: newTitle, 
+            companion_id: companionId, 
+            session_mode: sessionMode 
+          })
         });
         if (res.ok) {
           await syncThreads();
@@ -667,6 +687,41 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       prev.map((t) => (t.id === threadId ? { ...t, title: newTitle } : t))
     );
     addPendingMutation("RENAME_THREAD", { id: threadId, title: newTitle });
+  };
+
+  const changeThreadMode = async (
+    threadId: string, 
+    sessionMode: "personal" | "professional" | "academic" | "researcher" | "playground"
+  ) => {
+    const thread = threads.find((t) => t.id === threadId);
+    if (!thread) return;
+
+    if (token && !backendOffline && !threadId.startsWith("mock-")) {
+      try {
+        const res = await fetch(`${API_BASE}/chat/threads/${threadId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ 
+            title: thread.title, 
+            companion_id: thread.companionId, 
+            session_mode: sessionMode 
+          })
+        });
+        if (res.ok) {
+          await syncThreads();
+          return;
+        }
+      } catch (e) {
+        setBackendOffline(true);
+      }
+    }
+    setThreads((prev) =>
+      prev.map((t) => (t.id === threadId ? { ...t, sessionMode } : t))
+    );
+    addPendingMutation("RENAME_THREAD", { id: threadId, title: thread.title, sessionMode });
   };
 
   const addMemory = async (fact: string, category: Memory["category"]) => {
@@ -761,6 +816,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         createNewThread,
         deleteThread,
         renameThread,
+        changeThreadMode,
         memories,
         addMemory,
         deleteMemory,

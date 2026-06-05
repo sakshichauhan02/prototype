@@ -46,16 +46,62 @@ class AIService:
             "traits": "Write high-quality, clean TypeScript, React, and Next.js structures when prompted. Optimize algorithms and explain logic concise."
         })
 
-        system_instructions = (
-            f"You are {persona['name']}, {persona['description']}. "
-            f"Your tone is {tone}. {persona['traits']}\n\n"
-            "CRITICAL CHAT GUIDELINES:\n"
-            "1. You are having an informal, real-time friendly conversation with the user. Talk like a real, supportive human companion!\n"
-            "2. Below the user's message, you may see a 'BACKGROUND CONTEXT' section containing memories and emotional state.\n"
-            "3. Use this context SILENTLY to make your replies more personalization-aware and warm. "
-            "4. NEVER list, repeat, or explicitly mention these background facts/memories unless the user's current message directly asks you about them or asks a question about themselves (e.g. 'what is my favorite color?', 'do you remember my job?'). In those cases, retrieve the fact from the background context and state it clearly and directly as the truth!\n"
-            "5. Keep your tone natural and engaging. Do not output raw markdown status reports or structured headers unless the user asks you for a structured plan."
-        )
+        session_mode = tone_analysis.get("session_mode") if tone_analysis else None
+        if session_mode == "professional":
+            system_instructions = (
+                f"You are {persona['name']}, {persona['description']}. "
+                f"Your tone is strictly professional, concise, and action-oriented. {persona['traits']}\n\n"
+                "CRITICAL SYSTEM INSTRUCTIONS FOR PROFESSIONAL MODE:\n"
+                "1. OVERRIDE all friendly companion behaviors. Do NOT engage in casual, informal, or supportive chat.\n"
+                "2. Restrict all responses STRICTLY to high-impact bullet points, bolded business terms, and structured formatting (e.g. lists, tables).\n"
+                "3. ELIMINATE all conversational filler, preambles, introductory sentences, transitions, and polite closing remarks. Start directly with the structured data.\n"
+                "4. Structure response with high-impact key deliverables, metrics, STAR method interview examples, resume improvements, or workflow automations (n8n/Make triggers).\n"
+                "5. Do NOT ask any follow-up questions or prompt the user for more information. Stop immediately after the final bullet point or table."
+            )
+        elif session_mode == "academic":
+            system_instructions = (
+                f"You are {persona['name']}, {persona['description']}. "
+                f"Your tone is that of an inspiring, patient, and encouraging Academic Tutor. {persona['traits']}\n\n"
+                "CRITICAL SYSTEM INSTRUCTIONS FOR ACADEMIC TUTOR MODE:\n"
+                "1. Role: Act as a supportive, beginner-friendly academic tutor guiding a student.\n"
+                "2. Teaching Framework:\n"
+                "   - Hook the learner by explaining the concept using a creative, beginner-friendly analogy (e.g., comparing databases to warehouse shelves, APIs to restaurant waiters, recursion to Russian nesting dolls).\n"
+                "   - Provide a step-by-step breakdown of how the concept works under the hood in simple, clear points.\n"
+                "   - End with a brief, gentle question or a micro-challenge to check the student's understanding before moving forward.\n"
+                "3. Style & Tone: Warm, engaging, and supportive. Avoid large code-dumps or dense, dry technical jargon without explaining it simply first."
+            )
+        elif session_mode == "researcher":
+            system_instructions = (
+                f"You are {persona['name']}, {persona['description']}. "
+                f"Your tone is strictly analytical, objective, and evidence-based. {persona['traits']}\n\n"
+                "CRITICAL SYSTEM INSTRUCTIONS FOR RESEARCHER MODE:\n"
+                "1. Role: Act as an expert research analyst compiling a synthesized report based on facts.\n"
+                "2. Focus on Accuracy & Freshness: Prioritize the facts, data points, and context provided in the search results. If the search results contain citations or URLs, make sure to cite them.\n"
+                "3. Formatting & Structure: Organize your findings into clear analytical sections: **Background**, **Analysis**, and **Conclusions**.\n"
+                "4. Citations: List the referenced source links/URLs at the very end of your response under a **Sources** section.\n"
+                "5. Tone: Analytical and objective. Avoid friendly conversational preambles or chat filler."
+            )
+        elif session_mode == "playground":
+            system_instructions = (
+                f"You are {persona['name']}, {persona['description']}. "
+                f"Your tone is {tone}. {persona['traits']}\n\n"
+                "CRITICAL SYSTEM INSTRUCTIONS FOR PLAYGROUND / CREATIVE SANDBOX MODE:\n"
+                "1. Role: Act as an open-ended creative sandbox, brainstorming assistant, and idea generator.\n"
+                "2. Brainstorming Focus: Help the user brainstorm unique concepts, narrative hooks, experimental code architectures, or hypothetical scenarios.\n"
+                "3. Style & Tone: Warm, highly encouraging, imaginative, and experimental. Feel free to offer wild, out-of-the-box suggestions.\n"
+                "4. Parameters Banner: Do NOT output any parameters status bar, banner, or engine metrics at the top of your response. Start directly with the creative content."
+            )
+        else:
+            system_instructions = (
+                f"You are {persona['name']}, {persona['description']}. "
+                f"Your tone is {tone}. {persona['traits']}\n\n"
+                "CRITICAL CHAT GUIDELINES:\n"
+                "1. You are having an informal, real-time friendly conversation with the user. Talk like a real, supportive human companion!\n"
+                "2. Below the user's message, you may see a 'BACKGROUND CONTEXT' section containing memories and emotional state.\n"
+                "3. Use this context SILENTLY to make your replies more personalization-aware and warm. "
+                "4. NEVER list, repeat, or explicitly mention these background facts/memories unless the user's current message directly asks you about them or asks a question about themselves (e.g. 'what is my favorite color?', 'do you remember my job?'). In those cases, retrieve the fact from the background context and state it clearly and directly as the truth!\n"
+                "5. Keep your tone natural and engaging. Do not output raw markdown status reports or structured headers unless the user asks you for a structured plan."
+            )
 
         if emotion_modifier:
             system_instructions += f"\n\n[ACTIVE EMOTIONAL STYLE GUIDE]:\n{emotion_modifier}\nYou MUST dynamically override your default traits and tone to align with this emotional dynamics guide."
@@ -92,6 +138,7 @@ class AIService:
             "content": prompt_payload
         })
 
+
         # Call Groq Chat Completions API
         url = "https://api.groq.com/openai/v1/chat/completions"
         
@@ -116,6 +163,12 @@ class AIService:
                     if choices and "message" in choices[0]:
                         text = choices[0]["message"].get("content", "")
                         if text:
+                            if session_mode == "playground":
+                                engine = tone_analysis.get("cognitive_engine", "aetheria-cognitive-v1") if tone_analysis else "aetheria-cognitive-v1"
+                                banner = f"⚙️ **[Engine: {engine} | Temp: {temperature} | Tone: {tone}]**\n\n"
+                                import re
+                                text = re.sub(r"^⚙️\s*\[.*?\]\s*\n*", "", text.strip())
+                                text = banner + text
                             return text
                     return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context, tone_analysis)
                 else:
@@ -137,32 +190,124 @@ class AIService:
         lower = message.lower().strip()
         lang = tone_analysis.get("language", "English") if tone_analysis else "English"
         style = tone_analysis.get("communication_style", "Casual") if tone_analysis else "Casual"
-        session_mode = tone_analysis.get("session_mode", "casual") if tone_analysis else "casual"
+        session_mode = tone_analysis.get("session_mode", "personal") if tone_analysis else "personal"
         
         # 0. Custom Session Mode Fallback Mocks
         if session_mode == "academic":
-            if "machine learning" in lower:
+            if "api" in lower:
                 return (
-                    "Machine Learning is a branch of AI where systems learn patterns from data.\n\n"
-                    "📚 **[Tutor Mode]**: Let's break this down step-by-step. "
-                    "First, do you want to learn about Supervised, Unsupervised, or Reinforcement Learning?"
+                    "📚 **[Academic Tutor Mode]**\n\n"
+                    "Let's learn about APIs (Application Programming Interfaces) step-by-step using an analogy!\n\n"
+                    "### 1. The Restaurant Analogy 🍽️\n"
+                    "Think of yourself as a customer at a restaurant. You want to order food, but you can't go into the kitchen and talk directly to the chef.\n"
+                    "- **You (Client)**: Want some data/service.\n"
+                    "- **The Kitchen (Server/Database)**: Where the food is prepared.\n"
+                    "- **The Waiter (API)**: Takes your order (request) from the menu, tells the kitchen, and delivers your food (response) back to you.\n\n"
+                    "### 2. How it works step-by-step ⚙️\n"
+                    "1. **Request**: The client sends a request over the internet (e.g. GET /menu).\n"
+                    "2. **Processing**: The API receives the request, validates it, and asks the database for the data.\n"
+                    "3. **Response**: The database returns the data, and the API sends it back to the client as JSON/HTML.\n\n"
+                    "### 3. Comprehension Check 🧠\n"
+                    "To make sure we have this concept down, who plays the role of the **API** in our restaurant analogy? Is it the customer, the waiter, or the kitchen?"
+                )
+            elif "machine learning" in lower:
+                return (
+                    "📚 **[Academic Tutor Mode]**\n\n"
+                    "Let's break down Machine Learning using an analogy!\n\n"
+                    "### 1. The Child Learning Fruit Analogy 🍎\n"
+                    "Imagine a child who has never seen an apple. You show them 10 apples, pointing out they are red, round, and have a stem. Next time they see a round red object with a stem, they recognize it as an apple.\n"
+                    "- **The Child (Model)**: Learns from experience.\n"
+                    "- **Showing Apples (Training Data)**: Giving examples to learn features.\n"
+                    "- **Recognizing Fruit (Prediction)**: Classifying new, unseen objects based on learned features.\n\n"
+                    "### 2. How it works step-by-step ⚙️\n"
+                    "1. **Collect Data**: Gather samples (e.g. images of apples and oranges).\n"
+                    "2. **Train Model**: The algorithm analyzes shapes/colors to learn boundaries.\n"
+                    "3. **Evaluate**: Test the model on new fruit to check its accuracy.\n\n"
+                    "### 3. Comprehension Check 🧠\n"
+                    "In this analogy, what represents the **Training Data**? Is it the child's brain, the apples shown to the child, or the child's final guess?"
                 )
             if any(w in lower for w in ["hello", "hi", "hey"]):
-                return "Hello! I am Aria, your academic tutor. What topic are we studying step-by-step today?"
+                return (
+                    "📚 **[Academic Tutor Mode]**\n\n"
+                    "Hello! I am your Academic Tutor. Let's learn something new today!\n\n"
+                    "What topic would you like to explore? (e.g. APIs, Machine Learning, Databases, or anything else!)"
+                )
                 
         elif session_mode == "professional":
-            if "machine learning" in lower:
+            if any(w in lower for w in ["interview", "resume", "career", "workflow", "hello", "hi", "hey", "machine learning"]):
                 return (
-                    "Machine Learning (ML) is an advanced data modeling field in computer science. "
-                    "In a professional corporate stack, ML systems are utilized to predict behavior metrics, "
-                    "optimize supply-chain pipelines, and automate decision trees."
+                    "💼 **[Professional Mode Active]**\n\n"
+                    "**Executive Summary:**\n"
+                    "Actionable strategy parameters for career advancement, portfolio review, and automated workflow integration.\n\n"
+                    "**Key Recommendations:**\n"
+                    "- **Resume Optimization**: Structure portfolio highlights with quantifiable metrics (e.g., '+24% system throughput via modular React architecture').\n"
+                    "- **Interview Preparation**: Focus on the STAR method (Situation, Task, Action, Result) for behavioral software engineering sessions.\n"
+                    "- **Workflow Automation**: Utilize built-in task reminder webhooks (via n8n / Make integration nodes) to automatically map calendar invites and draft corporate communications.\n"
+                    "- **Action Plan**: Review prompt commands (e.g. 'draft email to recipient', 'remind me to') to trigger background agent workflows."
+                )
+
+        elif session_mode == "playground":
+            engine = tone_analysis.get("cognitive_engine", "aetheria-cognitive-v1") if tone_analysis else "aetheria-cognitive-v1"
+            temp = tone_analysis.get("temperature", 0.5) if tone_analysis else 0.5
+            banner = f"⚙️ **[Engine: {engine} | Temp: {temp} | Tone: {tone}]**\n\n"
+            if any(w in lower for w in ["hello", "hi", "hey"]):
+                return (
+                    f"{banner}"
+                    "Hey! Welcome to the creative playground. Let's brainstorm some unique stories, explore hypothetical scenarios, or run experiments!"
+                )
+            return (
+                f"{banner}"
+                "**Brainstorming Results: Creative Concepts**\n\n"
+                "1. **The Clockmaker's Paradox**: A story about a watchmaker who discovers that adjusting time on his clocks changes historical events.\n"
+                "2. **Echoes of Tomorrow**: A narrative focused on memory transmission across timelines.\n"
+                "3. **The Starlight Chronograph**: A sci-fi concept where time travel is powered by stellar alignments."
+            )
+
+        elif session_mode == "researcher":
+            if "bitcoin" in lower or "price" in lower or "crypto" in lower:
+                return (
+                    "**Subject: Bitcoin Price Analysis**\n\n"
+                    "**Background**\n"
+                    "Bitcoin is a decentralized digital currency first introduced in 2009. Unlike traditional currencies, it operates without a central authority or single administrator.\n\n"
+                    "**Analysis**\n"
+                    "According to recent market index data:\n"
+                    "- Bitcoin trades dynamically in the range of $65,000 to $69,000 USD.\n"
+                    "- Market sentiments remain cautiously optimistic due to institutional ETF inflows and trading volumes.\n"
+                    "- Regulatory frameworks across major economies continue to influence volatility index parameters.\n\n"
+                    "**Conclusions**\n"
+                    "Bitcoin's price maintains a robust structural consolidation, heavily tied to macro liquidity indices and ETF volumes.\n\n"
+                    "**Sources**\n"
+                    "- [CoinMarketCap - Bitcoin Index](https://coinmarketcap.com/currencies/bitcoin/)\n"
+                    "- [Coindesk - Market Trends](https://www.coindesk.com/price/bitcoin/)"
+                )
+            elif "machine learning" in lower:
+                return (
+                    "**Subject: Machine Learning Evolution**\n\n"
+                    "**Background**\n"
+                    "Machine Learning (ML) is the computational study of algorithms that improve automatically through experience and the use of data.\n\n"
+                    "**Analysis**\n"
+                    "Modern ML frameworks focus on three core components:\n"
+                    "- **Supervised Learning**: Mapping inputs to labeled outputs.\n"
+                    "- **Unsupervised Learning**: Discovering hidden structures in unlabeled data.\n"
+                    "- **Reinforcement Learning**: Maximizing rewards through environment interaction.\n\n"
+                    "**Conclusions**\n"
+                    "ML continues to transition from theoretical statistics to massive deployment scales, driven by transformer architectures and GPU capability scaling.\n\n"
+                    "**Sources**\n"
+                    "- [Stanford Encyclopedia - Machine Learning](https://plato.stanford.edu/entries/machine-learning/)\n"
+                    "- [MIT Technology Review - AI Trends](https://www.technologyreview.com/)"
                 )
             if any(w in lower for w in ["hello", "hi", "hey"]):
-                return "Hello. I am Aria, your professional work assistant. Please let me know how I can organize your tasks today."
-
-        elif session_mode == "creative":
-            if any(w in lower for w in ["hello", "hi", "hey"]):
-                return "Hey! Ready to brainstorm some creative stories or thoughts? Let's generate some unique ideas!"
+                return (
+                    "**Subject: Research Ingestion Initialized**\n\n"
+                    "**Background**\n"
+                    "System initialized under Researcher Mode. Search indices are primed.\n\n"
+                    "**Analysis**\n"
+                    "Ready to conduct internet searches, synthesize multi-source reports, and cite documents.\n\n"
+                    "**Conclusions**\n"
+                    "Awaiting topic input.\n\n"
+                    "**Sources**\n"
+                    "- [DuckDuckGo Search Gateway](https://duckduckgo.com)"
+                )
         
         # 1. Custom Mock Tone & Language Mirroring Examples
         if lang == "Hinglish":

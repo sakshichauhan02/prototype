@@ -32,7 +32,7 @@ async def run_tests():
         await db.refresh(new_t)
         print(f"\nCreated Thread ID: {new_t.id}")
         print(f"Title: {new_t.title}")
-        print(f"Default Session Mode: '{new_t.session_mode}' (Expected: 'casual')")
+        print(f"Default Session Mode: '{new_t.session_mode}' (Expected: 'personal')")
         
         # Update session mode to academic
         new_t.session_mode = "academic"

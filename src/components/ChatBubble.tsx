@@ -3,7 +3,7 @@
 import { Message, Companion } from "@/context/ChatContext";
 import { useTheme } from "@/context/ThemeContext";
 import { motion } from "framer-motion";
-import { FiCode, FiUser } from "react-icons/fi";
+import { FiCode, FiUser, FiDownload } from "react-icons/fi";
 
 interface ChatBubbleProps {
   message: Message;
@@ -14,6 +14,15 @@ export default function ChatBubble({ message, companion }: ChatBubbleProps) {
   const isUser = message.sender === "user";
   const { theme } = useTheme();
   const isDark = theme === "dark";
+
+  let displayContent = message.content;
+  let downloadUrl: string | null = null;
+
+  const urlMatch = displayContent.match(/(?:pdf_url|download_url|resume_url)\s*:\s*(https?:\/\/[^\s\r\n]+)/i);
+  if (urlMatch) {
+    downloadUrl = urlMatch[1];
+    displayContent = displayContent.replace(urlMatch[0], "").trim();
+  }
 
   return (
     <motion.div
@@ -49,7 +58,7 @@ export default function ChatBubble({ message, companion }: ChatBubbleProps) {
         {/* Content Box */}
         <div
           className={`
-            px-4.5 py-3 rounded-2xl text-[15px] leading-relaxed shadow-sm
+            px-4.5 py-3 rounded-2xl text-[15px] leading-relaxed shadow-sm w-full
             ${
               isUser
                 ? "bg-gradient-to-br from-indigo-500 to-indigo-600 dark:from-indigo-600 dark:to-indigo-700 text-white rounded-tr-sm border border-indigo-400/20 shadow-indigo-500/10"
@@ -60,9 +69,9 @@ export default function ChatBubble({ message, companion }: ChatBubbleProps) {
           `}
         >
           {/* Support inline mock code format if message contains code boxes */}
-          {message.content.includes("```") ? (
+          {displayContent.includes("```") ? (
             <div className="space-y-3 font-sans">
-              {message.content.split("```").map((chunk, index) => {
+              {displayContent.split("```").map((chunk, index) => {
                 if (index % 2 === 1) {
                   // Code block section
                   const codeLines = chunk.trim().split("\n");
@@ -90,7 +99,28 @@ export default function ChatBubble({ message, companion }: ChatBubbleProps) {
               })}
             </div>
           ) : (
-            <p className="whitespace-pre-line">{message.content}</p>
+            <p className="whitespace-pre-line">{displayContent}</p>
+          )}
+
+          {downloadUrl && (
+            <div className="mt-3.5 w-full flex justify-start">
+              <motion.a
+                href={downloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2.5 px-5 py-3 rounded-xl border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 font-medium text-sm transition-all duration-300 backdrop-blur-md shadow-[0_8px_32px_0_rgba(6,182,212,0.15)] hover:shadow-[0_8px_32px_0_rgba(6,182,212,0.3)] cursor-pointer w-full sm:w-auto justify-center"
+                whileHover={{ scale: 1.03, y: -1 }}
+                whileTap={{ scale: 0.97 }}
+              >
+                <motion.span
+                  animate={{ y: [0, -3, 0] }}
+                  transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
+                >
+                  <FiDownload className="w-4.5 h-4.5 text-cyan-400" />
+                </motion.span>
+                Download Your Resume
+              </motion.a>
+            </div>
           )}
         </div>
       </div>
