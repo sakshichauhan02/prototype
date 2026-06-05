@@ -3,6 +3,9 @@ from fastapi.responses import FileResponse
 from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 import os
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from app.database import get_db
 from app.api.deps import get_current_user
 from app.models.user import User
 
@@ -84,4 +87,17 @@ def download_resume(filename: str):
         media_type="application/pdf",
         filename=filename
     )
+
+@router.get("/diag/db")
+async def diag_db(db: AsyncSession = Depends(get_db)):
+    """
+    Temporary route to inspect active threads in DB.
+    """
+    try:
+        result = await db.execute(text("SELECT id, title, session_mode, user_id FROM chat_threads"))
+        rows = result.fetchall()
+        return [{"id": r[0], "title": r[1], "session_mode": r[2], "user_id": r[3]} for r in rows]
+    except Exception as e:
+        return {"error": str(e)}
+
 
