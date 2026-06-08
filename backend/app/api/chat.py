@@ -156,9 +156,8 @@ async def send_message(
     except Exception as e:
         print(f"Failed to query privacy settings: {e}")
 
-    # Enforce private mode and bypass memory logging automatically when Personal Mode is active
-    if thread.session_mode == "personal":
-        private_mode = True
+    # Enforce bypass of memory logging automatically when Personal Companion Mode is active
+    if thread.session_mode in ["personal", "personal_companion"]:
         consent_memory = False
 
     # Run emotion analysis and intent detection in parallel to optimize latency

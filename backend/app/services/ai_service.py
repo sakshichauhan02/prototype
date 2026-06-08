@@ -138,6 +138,25 @@ class AIService:
             "content": prompt_payload
         })
 
+        # If in Personal Companion mode, route exclusively to OpenRouter and bypass Groq completely
+        if session_mode in ["personal", "personal_companion"]:
+            if settings.OPENROUTER_API_KEY and settings.OPENROUTER_API_KEY.strip():
+                try:
+                    from app.services.openrouter_service import openrouter_service
+                    openrouter_reply = await openrouter_service.generate_openrouter_reply(
+                        messages=messages,
+                        temperature=temperature
+                    )
+                    if openrouter_reply:
+                        return openrouter_reply
+                    print("Warning: OpenRouter integration failed to return a response.")
+                except Exception as e:
+                    print(f"Warning: Exception calling OpenRouter service: {e}")
+            else:
+                print("Warning: OpenRouter API key is not configured for Personal Companion mode.")
+                
+            print("Bypassing Groq completely. Falling back to local mock simulation.")
+            return AIService.generate_mock_fallback(companion_id, message, tone, primary_emotion, rag_context, tone_analysis)
 
         # Call Groq Chat Completions API
         url = "https://api.groq.com/openai/v1/chat/completions"

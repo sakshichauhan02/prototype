@@ -23,6 +23,14 @@ class Settings(BaseSettings):
         default="",
         validation_alias="GROQ_API_KEY"
     )
+    OPENROUTER_API_KEY: str = Field(
+        default="",
+        validation_alias="OPENROUTER_API_KEY"
+    )
+    OPENROUTER_MODEL: str = Field(
+        default="cognitivecomputations/dolphin-mixtral-8x7b",
+        validation_alias="OPENROUTER_MODEL"
+    )
     QDRANT_PATH: str = "./qdrant_data"
     QDRANT_URL: str = ""
     QDRANT_API_KEY: str = ""

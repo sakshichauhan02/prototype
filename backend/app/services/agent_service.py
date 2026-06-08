@@ -598,7 +598,7 @@ class AgentService:
         - researcher: deep web-synthesized research instruction.
         - playground: experimental creative brainstorming mode.
         """
-        if session_mode == "personal":
+        if session_mode in ["personal", "personal_companion"]:
             from app.services.emotion_service import emotion_service
             return emotion_service.get_tone_mirroring_modifier(emotion_snap)
             
