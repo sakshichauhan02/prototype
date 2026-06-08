@@ -1,0 +1,141 @@
+================================================================================
+ARCHITECTURE, LOGIC, & API INTEGRATION SUMMARY
+Theme: Private Vault UI Separation & Vaulted History Protection
+================================================================================
+
+This document details the objective, logical steps, file-by-file implementation,
+and system connections of the updates made to the Aetheria platform.
+
+--------------------------------------------------------------------------------
+1. PROJECT OBJECTIVES
+--------------------------------------------------------------------------------
+- UI Separation (🔒 Private Vault): Visually isolate Personal Companion chats 
+  from active workspace chats in the sidebar for improved user classification.
+- Vaulted History Guard: Enforce strict privacy parameters on personal companion
+  chats, allowing history persistence in the SQL database for UI scrollback but
+  strictly blocking long-term memory extraction (vector database/Qdrant storage).
+- Compilation & Type Checking: Resolve all Next.js build-time errors and 
+  warnings (like the handleLogout reference error and TypeScript type union mismatch).
+- Space Optimization: Make the sidebar mode selector collapsible to maximize 
+  vertical room for both thread groups.
+
+--------------------------------------------------------------------------------
+2. SYSTEM CONNECTIONS & ARCHITECTURE FLOW
+--------------------------------------------------------------------------------
+
+   +-------------------------------------------------------------+
+   |                     NEXT.JS FRONTEND                        |
+   |                                                             |
+   |  - ChatContext: Synchronizes thread arrays with FastAPI.    |
+   |  - Sidebar: Splits threads list based on sessionMode.      |
+   |  - UI Sections: "Private Vault" vs "Active Workspaces".    |
+   +------------------------------+------------------------------+
+                                  |
+                        HTTP REST / GET / POST
+                                  |
+   +------------------------------v------------------------------+
+   |                     FASTAPI BACKEND                         |
+   |                                                             |
+   |  - get_threads: Fetches all threads for the logged-in user.  |
+   |  - send_message: Processes message inputs, checks mode.     |
+   |  - AI Service: Routes to AI engines based on sessionMode.   |
+   +-------------------+----------------------+------------------+
+                       |                      |
+             SQLite DB |                      | Vector Search / RAG
+                       |                      |
+   +-------------------v---+            +-----v------------------+
+   |  SQLITE (chat_history) |            |  QDRANT VECTOR DB      |
+   |                       |            |                        |
+   |  Saves scrollback for |            |  Extracts long-term    |
+   |  both personal and    |            |  memories ONLY for     |
+   |  professional threads |            |  workspace modes.      |
+   +-----------------------+            +------------------------+
+
+--------------------------------------------------------------------------------
+3. FILE-BY-FILE IMPLEMENTATION DETAILS
+--------------------------------------------------------------------------------
+
+FRONTEND FILES:
+===============
+
+1. src/context/ChatContext.tsx
+   - Objective: Define types, interfaces, and state handlers for the frontend.
+   - Implementation:
+     * Updated the `ChatThread` interface: Added `"personal_companion"` to the
+       `sessionMode` literal type union to ensure compilation safety.
+     * Modified type definitions for `createNewThread` and `changeThreadMode`
+       signatures to include `"personal_companion"`.
+     * Handles local localStorage token storage and API requests syncing.
+
+2. src/components/Sidebar.tsx
+   - Objective: Group threads list, support actions (rename/delete), and switch modes.
+   - Implementation:
+     * Partitioned threads list into `privateThreads` (personal, personal_companion)
+       and `workspaceThreads` (professional, academic, researcher, playground).
+     * Refactored thread list rendering into a reusable helper method
+       `renderThreadList` to keep the code DRY.
+     * Restored `handleLogout` function which was throwing a ReferenceError.
+     * Made the "Workspace Mode" selector collapsible to save ~170px of height
+       so that both section headers and their threads are visible at once.
+
+BACKEND FILES:
+==============
+
+3. backend/app/api/chat.py
+   - Objective: API Endpoint routes for threads and messages.
+   - Implementation:
+     * Inside `send_message` endpoint: If `thread.session_mode` is `"personal"`
+       or `"personal_companion"`, we force `consent_memory = False`.
+     * This blocks the execution of `perform_background_memory_extraction`,
+       ensuring no memory details leak into Qdrant vector database.
+     * Removed the previous bypass of SQL storage so that scrollback history
+       persists for user view.
+
+4. backend/app/config.py
+   - Objective: Manage application settings and environment variables.
+   - Implementation:
+     * Added configuration fields `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`
+       with Dolphin-Mixtral as the default.
+
+5. backend/app/schemas/chat.py
+   - Objective: Pydantic schemas validation.
+   - Implementation:
+     * Updated `session_mode` validation field to accept `"personal_companion"`.
+
+6. backend/app/services/agent_service.py
+   - Objective: Manage agent personalities and routing logic.
+   - Implementation:
+     * Added check conditions to route `"personal_companion"` session mode queries.
+
+7. backend/app/services/ai_service.py
+   - Objective: Handle requests to large language models.
+   - Implementation:
+     * Integrated the OpenRouter service to route Personal Companion requests.
+
+8. backend/app/services/openrouter_service.py [NEW]
+   - Objective: Call OpenRouter API for Dolphin Mixtral model.
+   - Implementation:
+     * Communicates with OpenRouter using httpx, formatted for system instructions.
+
+9. backend/verify_vaulted_history.py [NEW]
+   - Objective: Integration test suite.
+   - Implementation:
+     * Programmatically runs testing steps: logs in dev user, creates a personal
+       companion thread, sends personal data, verifies that no long-term memory
+       is extracted, and asserts that professional threads cannot access it.
+
+--------------------------------------------------------------------------------
+4. APIS & THIRD-PARTY SERVICES USED
+--------------------------------------------------------------------------------
+- OpenRouter API:
+  * Model: `cognitivecomputations/dolphin-mixtral-8x7b`
+  * Purpose: Personal Mode ("Bhai Mode") conversational model for casual Hinglish replies.
+- Gemini API:
+  * Purpose: Intent detection, routing classification, and backup fallback.
+- Groq API:
+  * Purpose: Llama 3 model processing for high-performance workspace tasks.
+- Qdrant Database API:
+  * Purpose: Storing and searching long-term semantic memory embeddings.
+- SQLite API (aiosqlite / SQLAlchemy):
+  * Purpose: Persistent relational storage for user accounts, threads, and chat messages.
+================================================================================
