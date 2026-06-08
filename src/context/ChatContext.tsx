@@ -26,7 +26,7 @@ export interface ChatThread {
   companionId: string;
   messages: Message[];
   updatedAt: string;
-  sessionMode?: "personal" | "professional" | "academic" | "researcher" | "playground";
+  sessionMode?: "personal" | "personal_companion" | "professional" | "academic" | "researcher" | "playground";
 }
 
 export interface Memory {
@@ -45,10 +45,10 @@ interface ChatContextType {
   setActiveThreadId: (id: string) => void;
   sendMessage: (content: string) => Promise<void>;
   isTyping: boolean;
-  createNewThread: (companionId: string, initialTitle?: string, sessionMode?: "personal" | "professional" | "academic" | "researcher" | "playground") => Promise<string>;
+  createNewThread: (companionId: string, initialTitle?: string, sessionMode?: "personal" | "personal_companion" | "professional" | "academic" | "researcher" | "playground") => Promise<string>;
   deleteThread: (threadId: string) => Promise<void>;
   renameThread: (threadId: string, newTitle: string) => Promise<void>;
-  changeThreadMode: (threadId: string, sessionMode: "personal" | "professional" | "academic" | "researcher" | "playground") => Promise<void>;
+  changeThreadMode: (threadId: string, sessionMode: "personal" | "personal_companion" | "professional" | "academic" | "researcher" | "playground") => Promise<void>;
   memories: Memory[];
   addMemory: (fact: string, category: Memory["category"]) => Promise<void>;
   deleteMemory: (id: string) => Promise<void>;
@@ -480,7 +480,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const createNewThread = async (
     companionId: string, 
     initialTitle?: string, 
-    sessionMode: "personal" | "professional" | "academic" | "researcher" | "playground" = "personal"
+    sessionMode: "personal" | "personal_companion" | "professional" | "academic" | "researcher" | "playground" = "personal"
   ): Promise<string> => {
     const companion = COMPANIONS.find((c) => c.id === companionId) || COMPANIONS[0];
     const defaultTitle = initialTitle || `New Chat with ${companion.name}`;
@@ -691,7 +691,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const changeThreadMode = async (
     threadId: string, 
-    sessionMode: "personal" | "professional" | "academic" | "researcher" | "playground"
+    sessionMode: "personal" | "personal_companion" | "professional" | "academic" | "researcher" | "playground"
   ) => {
     const thread = threads.find((t) => t.id === threadId);
     if (!thread) return;
