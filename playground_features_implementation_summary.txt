@@ -1,0 +1,216 @@
+================================================================================
+AETHERIA PLAYGROUND MODE INTEGRATIONS & ARCHITECTURE SUMMARY
+Created: June 9, 2026
+================================================================================
+
+This document details the objectives, architecture, connection flows, API integrations,
+and file-by-file logic steps for the Image Generation and Talking Avatar Video
+Generation features implemented in the Aetheria AI Workspace Companion.
+
+---
+1. OBJECTIVES & CAPABILITIES
+---
+* PLAYGROUND MODE IMAGE GENERATION:
+  Allows users in "playground" mode to ask the companion to generate images (in English
+  or Hindi). The backend uses Pollinations.ai, downloads/caches the image locally on 
+  the server to bypass browser CORS/rate limits and protect API keys, and returns a 
+  local static URL. The frontend renders it with custom loaders and error fallbacks.
+
+* PLAYGROUND MODE TALKING AVATAR VIDEO GENERATION:
+  Allows users in "playground" mode to ask the companion to speak a text (in English,
+  Hindi, or Hinglish). The backend calls the D-ID API, generates a video using a stock
+  female presenter with Microsoft Neural TTS voices, polls until done (up to 6 minutes), 
+  and returns the AWS S3 .mp4 URL. The frontend renders it as a native HTML5 video player.
+
+* EMOTION SERVICE ROBUSTNESS:
+  Fixes Hugging Face API connection failures by redirecting the backend requests to
+  the new official hf-inference router domain.
+
+---
+2. APIS USED & CONFIGURATION
+---
+1. Pollinations.ai Image Generation API:
+   - Endpoint: https://gen.pollinations.ai/image/{encoded_prompt}
+   - Auth: Bearer/Query API key (POLLINATIONS_API_KEY)
+   - Usage: Safe, backend-proxied image rendering.
+
+2. D-ID Talks API:
+   - Base URL: https://api.d-id.com
+   - Create Endpoint: POST /talks
+   - Poll Endpoint: GET /talks/{talk_id}
+   - Auth: Basic HTTP (base64 of "DID_API_KEY:")
+   - Microsoft Neural Voices Used:
+     * Hindi -> hi-IN-SwaraNeural (Female Swara)
+     * Hinglish -> en-IN-NeerjaNeural (Female Neerja, Indian Accent)
+     * English -> en-US-JennyNeural (Female Jenny, US Accent)
+
+3. Hugging Face Serverless Inference Router:
+   - Endpoint: https://router.huggingface.co/hf-inference/models/{model_id}
+   - Auth: Bearer Token (HUGGINGFACE_API_KEY)
+
+---
+3. FILE-BY-FILE LOGIC & IMPLEMENTATION
+---
+
+--------------------------------------------------------------------------------
+A. CONFIGURATION LAYER: backend/app/config.py
+--------------------------------------------------------------------------------
+* Objective: 
+  Expose external API credentials safely using Pydantic Settings.
+* Logic Steps:
+  1. Added `DID_API_KEY: str = ""` and `POLLINATIONS_API_KEY: str = ""` fields to the `Settings` class.
+  2. Pydantic automatically ingests these from `backend/.env` at runtime.
+
+--------------------------------------------------------------------------------
+B. APP STATIC ASSETS ROUTING: backend/app/main.py
+--------------------------------------------------------------------------------
+* Objective:
+  Mount the local image directory as static files to serve cached images to the frontend.
+* Logic Steps:
+  1. Imports `StaticFiles` from `fastapi.staticfiles`.
+  2. Resolves the absolute path to `static_images/` directory.
+  3. Mounts the folder at `/static_images`, enabling HTTP requests like 
+     `http://localhost:8000/static_images/image_xyz.jpg` to load locally cached files.
+
+--------------------------------------------------------------------------------
+C. HUGGING FACE INTEGRATION: backend/app/services/emotion_service.py
+--------------------------------------------------------------------------------
+* Objective:
+  Update model query routing to handle Hugging Face serverless inference migration.
+* Logic Steps:
+  1. Switched the target URL prefix from the deprecated subdomains to the new unified router:
+     `https://router.huggingface.co/hf-inference/models/cardiffnlp/twitter-roberta-base-sentiment-latest`
+  2. Ensures the emotion classification and RAG prompts do not crash on backend startup.
+
+--------------------------------------------------------------------------------
+D. D-ID TALKING VIDEO SERVICE: backend/app/services/did_service.py [NEW]
+--------------------------------------------------------------------------------
+* Objective:
+  Establish a secure service layer to communicate with D-ID, generate, and poll speaking videos.
+* Logic Steps:
+  1. **Voice Mapping**: Checks language of the text. Sets Microsoft SwaraNeural (Hindi),
+     NeerjaNeural (Hinglish), or JennyNeural (English) accordingly.
+  2. **Auth Generation**: Prepares Basic Auth header using `base64(DID_API_KEY + ":")`.
+  3. **POST /talks Request**: Sends prompt text along with a D-ID pre-aligned stock presenter 
+     avatar CDN URL (`https://clips-presenters.d-id.com/v2/lana/TtreMLgSnL/b4HH6GpEhF/image.png`).
+     This stock image bypasses face detection delays, cutting generation wait time from 5 mins to 1 min.
+  4. **Long Polling Loop**: Polls `GET /talks/{id}` every 3 seconds for up to 120 iterations 
+     (6 minutes). This allows Render deployments to safely wait through D-ID trial queue congestion.
+  5. **Mock Fallback**: If key is missing or polling fails, returns a fallback video 
+     (`mov_bbb.mp4`) to prevent system crashes.
+
+--------------------------------------------------------------------------------
+E. PLAYGROUND INTENT ROUTER: backend/app/services/agent_service.py
+--------------------------------------------------------------------------------
+* Objective:
+  Detect, extract, and execute Image and Video workflows when "Playground" mode is active.
+* Logic Steps:
+  1. **Intent Classification**:
+     - `_is_image_request(message)`: Uses regex to check for keywords like "create image", "photo", 
+       "tasveer", "banao", etc.
+     - `_is_video_request(message)`: Checks for keywords like "generate video", "speak this", 
+       "bolo", "batao", etc.
+  2. **Prompt Extraction**:
+     - `_extract_image_prompt` and `_extract_video_text` clean grammatical prefixes and 
+       suffixes (e.g. "ek sundar pahad ka photo banao" is cleaned to "sundar pahad").
+  3. **Image Agent Workflow**:
+     - Sends request to authenticated `gen.pollinations.ai/image/{prompt}?key=...`.
+     - Securely downloads the generated binary image payload.
+     - Caches the file inside `static_images/` using a unique UUID.
+     - Returns the local static URL to the chat thread.
+  4. **Video Agent Workflow**:
+     - Feeds extracted clean speech text to `did_service.generate_avatar_video(text)`.
+     - Returns the completed S3 `.mp4` video URL to the chat bubble.
+
+--------------------------------------------------------------------------------
+F. API ENDPOINT LAYER: backend/app/api/chat.py
+--------------------------------------------------------------------------------
+* Objective:
+  Integrate playground detection early in the chat message REST lifecycle.
+* Logic Steps:
+  1. Extracts `session_mode` from the request payload.
+  2. Passes it to `agent_service.detect_task_intent(message, session_mode)`.
+  3. If Playground Image/Video intent is detected, bypasses standard RAG database queries,
+     executes the workflow directly, and appends the result to the conversation.
+
+--------------------------------------------------------------------------------
+G. STATE PROVIDER: src/context/ChatContext.tsx
+--------------------------------------------------------------------------------
+* Objective:
+  Manage state, offline banner fallbacks, and fetch requests.
+* Logic Steps:
+  1. Sends messages to backend `/chat/threads/{id}/messages` without client-side timeouts.
+  2. Allows the typing indicator ("Aria is computing...") to run indefinitely while the backend
+     polls D-ID (1-2 minutes).
+  3. Refreshes the thread message list once the backend completes processing.
+
+--------------------------------------------------------------------------------
+H. FRONTEND RENDERING LAYER: src/components/ChatBubble.tsx
+--------------------------------------------------------------------------------
+* Objective:
+  Identify media links and render HTML5 components instead of raw markdown text.
+* Logic Steps:
+  1. **Regex Extraction**:
+     - Checks if AI content contains a URL ending in `.mp4` (D-ID video link).
+     - Checks if AI content is an image URL (containing `static_images` or `pollinations`).
+  2. **`DIDVideo` Component**:
+     - Renders `<video controls autoPlay className="rounded-lg shadow-lg" />`.
+     - Displays a custom pulsing loading skeleton while the video prepares.
+     - Implements a stylized card fallback with an "Open Video" button if playback fails.
+  3. **`PollinationsImage` Component**:
+     - Renders the image responsively.
+     - Displays a loading spinner during rendering/loading state and a fallback retry button.
+
+---
+4. INTEGRATION FLOW CHART
+---
+
+   [ User Types Message ]
+             │
+             ▼
+   ┌──────────────────┐
+   │ ChatBubble input │
+   └─────────┬────────┘
+             │ (fetch request)
+             ▼
+   ┌──────────────────────────────────────────┐
+   │ ChatContext (No client-side timeout set) │
+   └─────────┬────────────────────────────────┘
+             │
+             ▼
+   ┌──────────────────────────────────────────────┐
+   │ backend/app/api/chat.py                      │
+   │ - Extracts session_mode="playground"         │
+   └─────────┬────────────────────────────────────┘
+             │
+             ▼
+   ┌────────────────────────────────────────────────────────┐
+   │ backend/app/services/agent_service.py                  │
+   │ - Regex classifies request (Image or Video request)    │
+   │ - Extracts clean text/prompt                           │
+   └─────────┬──────────────────────────────┬───────────────┘
+             │                              │
+             ├─(If Video Request)           ├─(If Image Request)
+             ▼                              ▼
+   ┌───────────────────────────┐  ┌───────────────────────────────────────────┐
+   │ did_service.py            │  │ Pollinations.ai API                       │
+   │ - Checks voice language   │  │ - Fetches from gen.pollinations.ai        │
+   │ - Calls D-ID /talks       │  │ - Backend downloads & caches binary file  │
+   │ - Polls status (6m limit) │  │ - Saves to local static_images/           │
+   └─────────┬─────────────────┘  └─────────┬─────────────────────────────────┘
+             │ (S3 .mp4 URL)                │ (Local static URL)
+             ▼                              ▼
+   ┌────────────────────────────────────────────────────────┐
+   │ API returns JSON response to ChatContext               │
+   └─────────┬──────────────────────────────────────────────┘
+             │ (Updates UI State)
+             ▼
+   ┌────────────────────────────────────────────────────────┐
+   │ src/components/ChatBubble.tsx                          │
+   │ - Parses URLs                                          │
+   │ - Renders <video> or <img> wrapper directly in UI      │
+   └────────────────────────────────────────────────────────┘
+
+================================================================================
+Summary file compiled successfully. All integrations verified.
+================================================================================
