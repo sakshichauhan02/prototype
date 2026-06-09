@@ -21,7 +21,7 @@ class EmotionService:
         # --- Stage 1: Hugging Face Inference API ---
         hf_key = getattr(settings, "HUGGINGFACE_API_KEY", "")
         if hf_key and hf_key.strip():
-            url = "https://api-inference.huggingface.co/models/bhadresh-savani/distilbert-base-uncased-emotion"
+            url = "https://router.huggingface.co/hf-inference/models/bhadresh-savani/distilbert-base-uncased-emotion"
             headers = {"Authorization": f"Bearer {hf_key}"}
             try:
                 async with httpx.AsyncClient(timeout=3.0) as client:

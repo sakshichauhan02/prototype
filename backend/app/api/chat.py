@@ -165,12 +165,12 @@ async def send_message(
     from app.services.emotion_service import emotion_service
     from app.services.agent_service import agent_service
     
+    sm = thread.session_mode or "personal"
     emotion_task = emotion_service.analyze_emotion(msg_in.content)
-    intent_task = agent_service.detect_task_intent(msg_in.content)
+    intent_task = agent_service.detect_task_intent(msg_in.content, session_mode=sm)
     
     emotion_snap, agent_intent = await asyncio.gather(emotion_task, intent_task)
     pe = emotion_snap.get("primary_emotion", "neutral")
-    sm = thread.session_mode or "personal"
     combined_modifier = agent_service.route_session_mode(sm, emotion_snap)
 
     # Log user message (if NOT in private mode)

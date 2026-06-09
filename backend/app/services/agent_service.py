@@ -102,12 +102,214 @@ class AgentService:
         return None
 
     @staticmethod
-    async def detect_task_intent(message: str) -> Optional[Dict[str, Any]]:
+    def _is_image_request(message: str) -> bool:
+        msg_lower = message.lower().strip()
+        
+        # English patterns
+        english_patterns = [
+            r"\bcreate\s+(?:an?\s+)?image\b",
+            r"\bgenerate\s+(?:an?\s+)?image\b",
+            r"\bmake\s+(?:an?\s+)?image\b",
+            r"\bdraw\s+(?:an?\s+)?image\b",
+            r"\bimage\s+of\b",
+            r"\bphoto\s+of\b",
+            r"\bpicture\s+of\b",
+            r"\bdraw\b",
+        ]
+        
+        # Hindi / Hinglish equivalents
+        hindi_patterns = [
+            r"\bimage\s+banao\b",
+            r"\bphoto\s+banao\b",
+            r"\bpicture\s+banao\b",
+            r"\bchitra\s+banao\b",
+            r"\bchhavi\s+banao\b",
+            r"\btasveer\s+banao\b",
+            r"\bdraw\s+karo\b",
+            r"\bgenerate\s+karo\b",
+            r"\bcreate\s+karo\b",
+            r"\bmake\s+karo\b",
+            r"\bimage\s+generate\s+karo\b",
+            r"\bphoto\s+generate\s+karo\b",
+        ]
+        
+        for pattern in english_patterns + hindi_patterns:
+            if re.search(pattern, msg_lower):
+                return True
+                
+        return False
+
+    @staticmethod
+    def _extract_image_prompt(message: str) -> str:
+        prompt = message.strip()
+        
+        # Suffixes to check first (Hindi/Hinglish styles like "X ka image banao")
+        suffixes_to_strip = [
+            r"\s+(?:ka|ki|ke|ko)?\s*image\s+generate\s+karo\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*photo\s+generate\s+karo\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*image\s+banao\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*photo\s+banao\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*picture\s+banao\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*chitra\s+banao\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*chhavi\s+banao\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*tasveer\s+banao\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*draw\s+karo\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*generate\s+karo\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*create\s+karo\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*make\s+karo\b",
+        ]
+        
+        matched_suffix = False
+        for pattern in suffixes_to_strip:
+            match = re.search(pattern + r"\s*$", prompt, re.IGNORECASE)
+            if match:
+                prompt = prompt[:match.start()].strip()
+                matched_suffix = True
+                break
+                
+        # Prefixes to strip (English/Hindi styles like "create image of X" or "image of X")
+        prefixes_to_strip = [
+            r"^\s*(?:please\s+)?create\s+(?:an?\s+)?image\s+of\b",
+            r"^\s*(?:please\s+)?create\s+(?:an?\s+)?image\b",
+            r"^\s*(?:please\s+)?generate\s+(?:an?\s+)?image\s+of\b",
+            r"^\s*(?:please\s+)?generate\s+(?:an?\s+)?image\b",
+            r"^\s*(?:please\s+)?make\s+(?:an?\s+)?image\s+of\b",
+            r"^\s*(?:please\s+)?make\s+(?:an?\s+)?image\b",
+            r"^\s*(?:please\s+)?draw\s+(?:an?\s+)?image\s+of\b",
+            r"^\s*(?:please\s+)?draw\s+(?:an?\s+)?image\b",
+            r"^\s*(?:please\s+)?draw\b",
+            r"^\s*(?:please\s+)?photo\s+of\b",
+            r"^\s*(?:please\s+)?picture\s+of\b",
+            r"^\s*(?:a\s+)?photo\s+of\b",
+            r"^\s*(?:a\s+)?picture\s+of\b",
+            r"^\s*(?:please\s+)?image\s+of\b",
+        ]
+        
+        if not matched_suffix:
+            for pattern in prefixes_to_strip:
+                match = re.search(pattern, prompt, re.IGNORECASE)
+                if match:
+                    prompt = prompt[match.end():].strip()
+                    break
+        else:
+            # If we matched a Hindi suffix, clean up leading "ek ", "koi ", etc.
+            prompt_lower = prompt.lower()
+            if prompt_lower.startswith("ek "):
+                prompt = prompt[3:].strip()
+            elif prompt_lower.startswith("koi "):
+                prompt = prompt[4:].strip()
+                
+        # Clean up leading/trailing punctuation/quotes
+        prompt = prompt.strip(" '\".,?!")
+        
+        # Fallback to the original message if the prompt became completely empty
+        if not prompt:
+            prompt = message.strip()
+            
+        return prompt
+
+    @staticmethod
+    def _is_video_request(message: str) -> bool:
+        msg_lower = message.lower().strip()
+        
+        # English patterns
+        english_patterns = [
+            r"\bgenerate\s+(?:an?\s+)?video\b",
+            r"\bcreate\s+(?:an?\s+)?(?:avatar\s+)?video\b",
+            r"\bspeak\s+this\b",
+            r"\bmake\s+(?:a\s+)?talking\s+avatar\b",
+            r"\bmake\s+(?:a\s+)?talking\s+video\b",
+        ]
+        
+        # Hindi / Hinglish equivalents
+        hindi_patterns = [
+            r"\bvideo\s+banao\b",
+            r"\bavatar\s+video\s+banao\b",
+            r"\bbolo\b",
+            r"\bbatao\b",
+            r"\bspeak\s+karo\b",
+        ]
+        
+        for pattern in english_patterns + hindi_patterns:
+            if re.search(pattern, msg_lower):
+                return True
+                
+        return False
+
+    @staticmethod
+    def _extract_video_text(message: str) -> str:
+        prompt = message.strip()
+        
+        # Suffixes to check first (Hindi/Hinglish styles like "X ka video banao")
+        suffixes_to_strip = [
+            r"\s+(?:ka|ki|ke|ko)?\s*avatar\s+video\s+banao\b",
+            r"\s+(?:ka|ki|ke|ko)?\s*video\s+banao\b",
+            r"\s+bolo\b",
+            r"\s+batao\b",
+            r"\s+speak\s+karo\b",
+        ]
+        
+        matched_suffix = False
+        for pattern in suffixes_to_strip:
+            match = re.search(pattern + r"\s*$", prompt, re.IGNORECASE)
+            if match:
+                prompt = prompt[:match.start()].strip()
+                matched_suffix = True
+                break
+                
+        # Prefixes to strip
+        prefixes_to_strip = [
+            r"^\s*(?:please\s+)?speak\s+this\s*:\s*",
+            r"^\s*(?:please\s+)?speak\s+this\b",
+            r"^\s*(?:please\s+)?generate\s+(?:an?\s+)?(?:avatar\s+)?video\s+(?:of|with|containing)?\b",
+            r"^\s*(?:please\s+)?create\s+(?:an?\s+)?(?:avatar\s+)?video\s+(?:of|with|containing)?\b",
+            r"^\s*(?:please\s+)?make\s+(?:a\s+)?talking\s+avatar\s+(?:of|with|containing)?\b",
+            r"^\s*(?:please\s+)?make\s+(?:a\s+)?talking\s+video\s+(?:of|with|containing)?\b",
+        ]
+        
+        if not matched_suffix:
+            for pattern in prefixes_to_strip:
+                match = re.search(pattern, prompt, re.IGNORECASE)
+                if match:
+                    prompt = prompt[match.end():].strip()
+                    break
+        else:
+            # Clean up leading Hindi words if we stripped a suffix
+            prompt_lower = prompt.lower()
+            if prompt_lower.startswith("ek "):
+                prompt = prompt[3:].strip()
+                
+        prompt = prompt.strip(" '\".,?!:")
+        if not prompt:
+            prompt = message.strip()
+            
+        return prompt
+
+    @staticmethod
+    async def detect_task_intent(message: str, session_mode: str = None) -> Optional[Dict[str, Any]]:
         """
         Intelligently detects if the message triggers an agent workflow,
         performs web search, or is a standard chat.
         Uses Gemini LLM for classification, falling back to regex.
         """
+        if session_mode == "playground" and AgentService._is_image_request(message):
+            prompt = AgentService._extract_image_prompt(message)
+            return {
+                "agent": "Image Agent",
+                "title": "Generate Image",
+                "description": prompt,
+                "raw_message": message
+            }
+
+        if session_mode == "playground" and AgentService._is_video_request(message):
+            prompt = AgentService._extract_video_text(message)
+            return {
+                "agent": "Video Agent",
+                "title": "Generate Avatar Video",
+                "description": prompt,
+                "raw_message": message
+            }
+
         # Check if key is configured
         if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
             return await AgentService._regex_fallback_intent(message)
@@ -325,6 +527,60 @@ class AgentService:
                     f"🔍 **[Research Agent Active]**: I have conducted internet research on **{topic}**:\n\n"
                     f"{summary}"
                 )
+            }
+        elif agent == "Image Agent":
+            import urllib.parse
+            import uuid
+            import httpx
+            import os
+            
+            prompt = desc
+            encoded_prompt = urllib.parse.quote(prompt)
+            # Use the authenticated new endpoint if key is present, otherwise use legacy anonymous URL
+            api_key = getattr(settings, "POLLINATIONS_API_KEY", "")
+            if api_key:
+                image_url = f"https://gen.pollinations.ai/image/{encoded_prompt}?key={api_key}"
+            else:
+                image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+                
+            # Let's download the image to cache it locally
+            filename = f"image_{uuid.uuid4().hex[:8]}.jpg"
+            image_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "static_images")
+            os.makedirs(image_dir, exist_ok=True)
+            file_path = os.path.join(image_dir, filename)
+            
+            local_url = None
+            try:
+                # We will make a GET request to pollinations to fetch the image bytes
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.get(image_url)
+                    if resp.status_code == 200:
+                        # Write the bytes to local file
+                        with open(file_path, "wb") as f:
+                            f.write(resp.content)
+                        # Construct local URL served via static files mount
+                        local_url = f"http://localhost:8000/static_images/{filename}"
+                    else:
+                        print(f"Warning: Pollinations API returned status {resp.status_code}: {resp.text[:200]}")
+            except Exception as e:
+                print(f"Warning: Failed to proxy/download pollinations image: {e}")
+                
+            clean_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+            output_url = local_url if local_url else clean_url
+            
+            return {
+                "success": True,
+                "agent": agent,
+                "output": output_url
+            }
+        elif agent == "Video Agent":
+            from app.services.did_service import did_service
+            text_payload = desc
+            video_url = await did_service.generate_avatar_video(text_payload)
+            return {
+                "success": True,
+                "agent": agent,
+                "output": video_url
             }
         elif agent == "Resume Agent":
             # Extract fields from the intent dictionary or regex fallback

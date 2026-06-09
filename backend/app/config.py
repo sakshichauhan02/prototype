@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     NEWS_API_KEY: str = ""
     N8N_WEBHOOK_URL: str = ""
     MAKE_WEBHOOK_URL: str = ""
+    POLLINATIONS_API_KEY: str = ""
+    DID_API_KEY: str = ""
 
     class Config:
         case_sensitive = True

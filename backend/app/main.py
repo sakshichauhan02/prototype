@@ -71,6 +71,13 @@ async def on_startup():
         except Exception as migration_error:
             print(f"Database inline migration warning: {migration_error}")
 
+from fastapi.staticfiles import StaticFiles
+import os
+
+IMAGE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static_images")
+os.makedirs(IMAGE_DIR, exist_ok=True)
+app.mount("/static_images", StaticFiles(directory=IMAGE_DIR), name="static_images")
+
 @app.get("/")
 def read_root():
     return {
