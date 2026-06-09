@@ -16,4 +16,9 @@ services:
         sync: false
       - key: QDRANT_API_KEY
         sync: false
+      - key: DID_API_KEY
+        sync: false
+      - key: POLLINATIONS_API_KEY
+        sync: false
     healthCheckPath: /
+
